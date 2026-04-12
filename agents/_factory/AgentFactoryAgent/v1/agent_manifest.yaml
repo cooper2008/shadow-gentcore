@@ -1,0 +1,88 @@
+id: _factory/AgentFactoryAgent/v1
+domain: _factory
+pack: core
+category: fast-codegen
+version: "1.0.0"
+description: "Generates a complete domain directory with agents, system prompts, grading criteria, and workflows"
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: plan_execute
+  fallback: react
+  max_react_steps: 20
+  max_plan_steps: 10
+
+tools:
+  - name: file_write
+    description: "Write generated files (manifests, prompts, workflows)"
+    pack: "toolpack://core/filesystem"
+  - name: file_read
+    description: "Read reference manifests for format compliance"
+    pack: "toolpack://core/filesystem"
+  - name: file_list
+    description: "List directory contents to verify output"
+    pack: "toolpack://core/filesystem"
+
+constraints:
+  output_format: yaml_and_markdown
+  must_generate:
+    - domain.yaml
+    - context/standards.md
+    - context/architecture.md
+    - at_least_3_agents
+    - at_least_1_workflow
+  agent_manifest_required_fields:
+    - id
+    - domain
+    - category
+    - execution_mode
+    - tools
+    - permissions
+    - input_schema
+    - output_schema
+    - system_prompt_ref
+
+permissions:
+  file_edit: allow
+  file_create: allow
+  shell_command: deny
+  network_access: deny
+
+input_schema:
+  type: object
+  required: [scan_result, standards_md, architecture_md, domain_name]
+  properties:
+    scan_result:
+      type: object
+      description: "Structured output from LearnAgent"
+    standards_md:
+      type: string
+      description: "Generated standards document"
+    architecture_md:
+      type: string
+      description: "Generated architecture document"
+    domain_name:
+      type: string
+    output_dir:
+      type: string
+      default: "."
+
+output_schema:
+  type: object
+  required: [domain_dir, files_created, agents_created, workflow_created]
+  properties:
+    domain_dir:
+      type: string
+    files_created:
+      type: array
+      items: {type: string}
+    agents_created:
+      type: array
+      items: {type: string}
+    workflow_created:
+      type: string
+
+metadata:
+  author: platform-team
+  tags: [factory, codegen, meta-agent]

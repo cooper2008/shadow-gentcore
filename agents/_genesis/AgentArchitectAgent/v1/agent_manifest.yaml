@@ -1,0 +1,201 @@
+id: _genesis/AgentArchitectAgent/v1
+domain: _genesis
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Designs the agent roster, workflow DAG, tool assignments, and grading specs for a domain. Architects the complete agent system without building it."
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: plan_execute
+  fallback: react
+  max_react_steps: 8
+  max_plan_steps: 10
+
+tools:
+  - name: file_read
+    description: "Read existing agent manifests and workflow examples for reference"
+    pack: "toolpack://core/filesystem"
+
+constraints:
+  read_only: true
+
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+
+input_schema:
+  type: object
+  required: [knowledge_map, context_docs, tools_discovered]
+  properties:
+    knowledge_map:
+      type: object
+      description: "Classified knowledge map from KnowledgeMapperAgent"
+    context_docs:
+      type: object
+      description: "Generated context documents from ContextEngineerAgent (documents field)"
+    tools_discovered:
+      type: object
+      description: "Discovered tools and configurations from ToolDiscoveryAgent"
+    industry:
+      type: string
+      description: "Industry context (e.g., healthcare, fintech, manufacturing)"
+
+output_schema:
+  type: object
+  required: [agent_roster, workflow_design, tool_assignments, grading_specs, design_quality]
+  properties:
+    agent_roster:
+      type: array
+      items:
+        type: object
+        required: [name, purpose, category, version, description, execution_mode, tools, permissions, constraints, input_schema, output_schema]
+        properties:
+          name: {type: string}
+          purpose: {type: string}
+          version: {type: string, default: "1.0.0"}
+          description: {type: string}
+          category:
+            type: string
+            enum: [reasoning, fast-codegen, security-analysis]
+          execution_mode:
+            type: object
+            properties:
+              primary: {type: string}
+              fallback: {type: string}
+              max_react_steps: {type: integer}
+              max_plan_steps: {type: integer}
+          tools:
+            type: array
+            items:
+              type: object
+              required: [name, pack]
+              properties:
+                name: {type: string}
+                description: {type: string}
+                pack: {type: string}
+          permissions:
+            type: object
+            properties:
+              file_edit: {type: string, enum: [allow, deny, ask]}
+              file_create: {type: string, enum: [allow, deny, ask]}
+              shell_command: {type: string, enum: [allow, deny, ask]}
+              network_access: {type: string, enum: [allow, deny]}
+          constraints:
+            type: object
+            description: "Agent-specific safety constraints (max_file_size_kb, forbidden_patterns, read_only, etc.)"
+          input_schema: {type: object}
+          output_schema: {type: object}
+          compliance_constraints:
+            type: array
+            items: {type: string}
+          harness:
+            type: object
+            description: "Harness behavior for this agent in workflows"
+            properties:
+              gate_condition: {type: string}
+              gate_on_fail: {type: string, enum: [retry, retry_fresh, abort, degrade, escalate_human]}
+              max_retries: {type: integer}
+              fallback_step: {type: string}
+              grading_threshold: {type: number}
+    workflow_design:
+      type: object
+      required: [name, steps, gates]
+      properties:
+        name: {type: string}
+        steps:
+          type: array
+          items:
+            type: object
+            required: [agent, depends_on]
+            properties:
+              agent: {type: string}
+              depends_on:
+                type: array
+                items: {type: string}
+              description: {type: string}
+        gates:
+          type: array
+          items:
+            type: object
+            required: [after_step, criteria]
+            properties:
+              after_step: {type: string}
+              criteria: {type: string}
+              blocking: {type: boolean}
+        feedback_loops:
+          type: array
+          items:
+            type: object
+            required: [from, to, condition]
+            properties:
+              from: {type: string}
+              to: {type: string}
+              condition: {type: string}
+              max_retries: {type: integer}
+        parallel_branches:
+          type: array
+          items:
+            type: object
+            required: [agents]
+            properties:
+              agents:
+                type: array
+                items: {type: string}
+              join_step: {type: string}
+        budget:
+          type: object
+          properties:
+            max_total_tokens: {type: integer}
+            max_per_agent_tokens: {type: integer}
+            timeout_minutes: {type: integer}
+    tool_assignments:
+      type: object
+      description: "Map of agent_name to list of tools assigned"
+      additionalProperties:
+        type: array
+        items: {type: string}
+    grading_specs:
+      type: array
+      items:
+        type: object
+        required: [agent_name, automated_criteria, llm_judge_criteria, pass_threshold]
+        properties:
+          agent_name: {type: string}
+          automated_criteria:
+            type: array
+            items:
+              type: object
+              required: [name, check]
+              properties:
+                name: {type: string}
+                check: {type: string}
+                weight: {type: number}
+          llm_judge_criteria:
+            type: array
+            items:
+              type: object
+              required: [name, prompt]
+              properties:
+                name: {type: string}
+                prompt: {type: string}
+                weight: {type: number}
+          pass_threshold: {type: number, minimum: 0, maximum: 1}
+    design_quality:
+      type: object
+      required: [process_coverage_pct, dag_valid, agent_count, has_feedback_loops, has_compliance_gates]
+      properties:
+        process_coverage_pct: {type: number, minimum: 0, maximum: 100}
+        dag_valid: {type: boolean}
+        agent_count: {type: integer}
+        has_feedback_loops: {type: boolean}
+        has_compliance_gates: {type: boolean}
+
+grading_criteria_ref: grading_criteria.yaml
+
+metadata:
+  author: platform-team
+  tags: [genesis, architect, design, workflow, meta-agent]

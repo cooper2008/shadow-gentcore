@@ -1,0 +1,40 @@
+id: _shared/PerformanceTestAgent/v1
+domain: _shared
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Runs performance tests. Context-driven."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: react
+  max_react_steps: 12
+tools:
+  - name: shell_exec
+    description: "Execute commands"
+    pack: "toolpack://core/shell"
+  - name: file_read
+    description: "Read files"
+    pack: "toolpack://core/filesystem"
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: allow
+  network_access: deny
+input_schema:
+  type: object
+  properties:
+    task_description: {type: string}
+output_schema:
+  type: object
+  required:
+    - passed
+    - metrics
+    - regression_detected
+    - summary
+  properties:
+    passed: {type: string}
+    metrics: {type: string}
+    regression_detected: {type: string}
+    summary: {type: string}
+metadata:
+  tags: [shared, reusable]

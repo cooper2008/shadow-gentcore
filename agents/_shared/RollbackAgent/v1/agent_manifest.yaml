@@ -1,0 +1,39 @@
+id: _shared/RollbackAgent/v1
+domain: _shared
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Rolls back deployments and migrations safely. Context-driven."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: plan_execute
+  max_plan_steps: 5
+tools:
+  - name: shell_exec
+    description: "Execute rollback commands"
+    pack: "toolpack://core/shell"
+  - name: file_read
+    description: "Read deployment records"
+    pack: "toolpack://core/filesystem"
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: allow
+  network_access: deny
+input_schema:
+  type: object
+  required: [rollback_type]
+  properties:
+    rollback_type: {type: string}
+    target_version: {type: string}
+    rollback_command: {type: string}
+output_schema:
+  type: object
+  required: [rollback_status, health_check_passed, summary]
+  properties:
+    rollback_status: {type: string}
+    previous_version: {type: string}
+    health_check_passed: {type: boolean}
+    summary: {type: string}
+metadata:
+  tags: [shared, rollback, devops, reusable]

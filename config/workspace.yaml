@@ -1,0 +1,106 @@
+repos:
+  agent-contracts:
+    path: ../agent-contracts
+    role: contracts
+    description: "Shared Pydantic types \u2014 manifests, contracts, enums"
+    install: pip install -e ../agent-contracts
+  shadow-gentcore:
+    path: .
+    role: sdk
+    description: "Core framework SDK \u2014 engine, CLI, authoring, providers"
+    install: pip install -e .
+  agent-tools:
+    path: ../agent-tools
+    role: tools
+    description: Tool adapters (CLI, MCP, HTTP) and tool packs
+    packs_dir: src/agent_tools/packs
+    install: pip install -e ../agent-tools
+  acme-backend:
+    path: ../acme-backend
+    role: domain
+    description: "Acme Corp FastAPI backend — demo domain team repo"
+domains:
+- path: ../acme-backend
+  type: external
+- path: examples/backend
+  type: example
+- path: examples/backend_fastapi
+  type: example
+- path: examples/frontend_react
+  type: example
+- path: agents/_orchestrator
+  type: internal
+- path: agents/_maintenance
+  type: internal
+- path: agents/_factory
+  type: internal
+- path: agents/_shared
+  type: internal
+- path: /tmp/test-domain
+  type: external
+tool_packs:
+- ../agent-tools/src/agent_tools/packs
+mcp_config: config/mcp_servers.yaml
+knowledge:
+  storage: domain-local
+
+teams:
+  acme-backend:
+    industry: ecommerce
+    trusted: true
+    reference:
+      - path: ../acme-backend/src
+        label: "Acme Corp FastAPI backend source"
+    target:
+      - path: ../acme-backend/src
+      - path: ../acme-backend/tests
+    docs:
+      - path: ../acme-backend/context
+        type: documents
+      - path: ../acme-backend/docs
+        type: documents
+    focus: [fastapi, sqlalchemy, postgresql, alembic, pytest, docker]
+    output: ../acme-backend
+    provider_config: ../acme-backend/config/provider.yaml
+
+  backend-team:
+    industry: software
+    trusted: true
+    reference:
+      - path: examples/backend_fastapi
+        label: "Gold standard FastAPI backend"
+    target:
+      - path: examples/backend_fastapi
+    docs:
+      - path: docs
+        type: documents
+    focus: [api, database, testing, deployment]
+    output: ./domains/backend
+
+  fullstack-team:
+    industry: software
+    trusted: true
+    reference:
+      - path: sample_project/backend
+        label: "Gold standard FastAPI backend"
+    target:
+      - path: sample_project/backend
+      - path: sample_project/frontend
+      - path: sample_project/infra
+    docs:
+      - path: sample_project/docs
+        type: documents
+    focus: [api, frontend, infrastructure, database, cicd, deployment]
+    output: ../domain-fullstack
+
+  frontend-team:
+    industry: software
+    trusted: true
+    reference:
+      - path: examples/frontend_react
+        label: "Reference React frontend"
+    target:
+      - path: examples/frontend_react
+    docs: []
+    focus: [react, components, testing]
+    output: ./domains/frontend

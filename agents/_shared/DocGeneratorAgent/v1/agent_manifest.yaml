@@ -1,0 +1,45 @@
+id: _shared/DocGeneratorAgent/v1
+domain: _shared
+pack: core
+category: fast-codegen
+version: "1.0.0"
+description: "Generates documentation — READMEs, API docs, architecture docs. Context-driven."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: plan_execute
+  fallback: react
+  max_react_steps: 10
+  max_plan_steps: 5
+tools:
+  - name: file_write
+    description: "Write documentation files"
+    pack: "toolpack://core/filesystem"
+  - name: file_read
+    description: "Read source code and existing docs"
+    pack: "toolpack://core/filesystem"
+  - name: search_code
+    description: "Find docstrings and type annotations"
+    pack: "toolpack://core/search"
+  - name: list_dir
+    description: "Scan directory structure"
+    pack: "toolpack://core/search"
+permissions:
+  file_edit: allow
+  file_create: allow
+  shell_command: deny
+  network_access: deny
+input_schema:
+  type: object
+  required: [doc_type]
+  properties:
+    doc_type: {type: string}
+    source_path: {type: string, default: "src/"}
+    output_path: {type: string, default: "docs/"}
+output_schema:
+  type: object
+  required: [files_created, summary]
+  properties:
+    files_created: {type: array, items: {type: string}}
+    summary: {type: string}
+metadata:
+  tags: [shared, documentation, reusable]

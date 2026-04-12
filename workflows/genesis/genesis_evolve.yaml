@@ -1,0 +1,48 @@
+name: genesis_evolve
+domain: _genesis
+version: "1.0.0"
+description: "Post-deployment: analyze runs, improve agents, revalidate"
+
+steps:
+  - name: analyze
+    agent: _genesis/EvolutionAgent/v1
+    description: "Analyze run history, identify improvements"
+    gate:
+      condition: "status == success"
+      on_fail: abort
+
+  - name: apply
+    agent: _genesis/AgentBuilderAgent/v1
+    depends_on: [analyze]
+    description: "Apply prioritized improvements"
+    permissions_override:
+      file_edit: allow
+    gate:
+      condition: "status == success"
+      on_fail: retry
+      max_retries: 1
+
+  - name: revalidate
+    agent: _genesis/QualityGateAgent/v1
+    depends_on: [apply]
+    description: "Ensure improvements didn't break anything"
+    gate:
+      condition: "status == success"
+      on_fail: rollback
+      rollback_to: apply
+
+feedback_loops:
+  - name: revalidate_to_apply
+    from_step: revalidate
+    to_step: apply
+    condition: "revalidate.validation_passed == false"
+    max_iterations: 1
+
+budget:
+  max_tokens: 200000
+  max_cost_usd: 10.0
+  max_duration_seconds: 1800
+
+metadata:
+  author: platform-team
+  tags: [genesis, evolution, self-improvement]

@@ -1,0 +1,25 @@
+id: "_maintenance/DriftCleanupAgent/v1"
+name: DriftCleanupAgent
+domain: _maintenance
+version: v1
+category: maintenance
+description: "Detects and reports schema drift between published domain versions. Proposes migration plans."
+system_prompt_ref: "agents/_maintenance/DriftCleanupAgent/v1/system_prompt.md"
+execution_mode: chain_of_thought
+tools: []
+input_schema:
+  type: object
+  properties:
+    domain_name:
+      type: string
+    from_version:
+      type: string
+    to_version:
+      type: string
+output_schema:
+  type: object
+  properties:
+    drift_report:
+      type: object
+    migration_plan:
+      type: array

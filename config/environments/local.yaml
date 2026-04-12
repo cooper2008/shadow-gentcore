@@ -1,0 +1,28 @@
+# Local Development Environment Configuration
+
+runtime: local
+
+permissions:
+  mode: interactive
+  default_action: ask
+
+workspace:
+  root: .
+  scratch_dir: .harness/scratch
+  runs_dir: .harness/runs
+
+storage:
+  backend: filesystem
+  base_path: .harness/runs
+
+credentials:
+  source: env_var
+
+output:
+  mode: console
+  verbose: true
+  structured_logging: true
+
+budget:
+  warn_at_percentage: 0.8
+  enforce_limits: true

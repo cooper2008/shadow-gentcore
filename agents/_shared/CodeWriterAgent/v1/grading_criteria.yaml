@@ -1,0 +1,22 @@
+criteria:
+  - name: follows_standards
+    type: llm_judge
+    weight: 0.30
+    prompt: "Does this code follow ALL coding standards from the context?"
+  - name: type_annotations
+    type: automated
+    weight: 0.20
+    check: "type_hint_coverage >= 0.9"
+  - name: files_created
+    type: automated
+    weight: 0.20
+    check: "files_created_count >= 1"
+  - name: no_forbidden_patterns
+    type: automated
+    weight: 0.15
+    check: "forbidden_pattern_count == 0"
+  - name: matches_architecture
+    type: llm_judge
+    weight: 0.15
+    prompt: "Does this code follow the architecture patterns from context?"
+threshold: 0.75

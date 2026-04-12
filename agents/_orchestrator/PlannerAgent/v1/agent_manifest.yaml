@@ -1,0 +1,67 @@
+id: _orchestrator/PlannerAgent/v1
+domain: _orchestrator
+pack: platform
+category: reasoning
+version: "1.0.0"
+description: "Produces a FeatureContract with PASS/FAIL criteria from a task description"
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: plan_execute
+  fallback: chain_of_thought
+  max_plan_steps: 5
+
+tools:
+  - name: file_read
+    description: "Read content from a file"
+    pack: "toolpack://core/filesystem"
+  - name: search_code
+    description: "Search codebase for patterns"
+    pack: "toolpack://core/search"
+
+constraints:
+  max_criteria: 20
+  require_measurable_criteria: true
+
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+
+input_schema:
+  type: object
+  required:
+    - task_description
+  properties:
+    task_description:
+      type: string
+    context:
+      type: object
+    existing_contracts:
+      type: array
+
+output_schema:
+  type: object
+  required:
+    - contract_id
+    - criteria
+  properties:
+    contract_id:
+      type: string
+    criteria:
+      type: array
+      items:
+        type: string
+    source_agent:
+      type: string
+    target_evaluator:
+      type: string
+
+metadata:
+  author: platform-team
+  tags:
+    - orchestrator
+    - planning
+    - contracts

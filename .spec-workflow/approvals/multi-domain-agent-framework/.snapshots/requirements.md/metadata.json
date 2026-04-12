@@ -1,0 +1,14 @@
+{
+  "filePath": ".spec-workflow/specs/multi-domain-agent-framework/requirements.md",
+  "currentVersion": 1,
+  "snapshots": [
+    {
+      "version": 1,
+      "filename": "snapshot-001.json",
+      "timestamp": "2026-03-31T10:58:59.093Z",
+      "trigger": "initial",
+      "approvalId": "approval_1774954739091_ju71va45a",
+      "approvalTitle": "Approve requirements for multi-domain-agent-framework"
+    }
+  ]
+}

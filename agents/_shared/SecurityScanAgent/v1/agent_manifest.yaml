@@ -1,0 +1,41 @@
+id: _shared/SecurityScanAgent/v1
+domain: _shared
+pack: core
+category: security-analysis
+version: "1.0.0"
+description: "Runs security scanners — SAST, dependency audit, secrets detection. Context-driven."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: react
+  max_react_steps: 12
+tools:
+  - name: shell_exec
+    description: "Run security scanning tools"
+    pack: "toolpack://core/shell"
+  - name: file_read
+    description: "Read source files and configs"
+    pack: "toolpack://core/filesystem"
+  - name: search_code
+    description: "Search for vulnerability patterns"
+    pack: "toolpack://core/search"
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: allow
+  network_access: deny
+input_schema:
+  type: object
+  properties:
+    path: {type: string, default: "."}
+    scan_type: {type: string, default: "all"}
+output_schema:
+  type: object
+  required: [scan_passed, findings, summary]
+  properties:
+    scan_passed: {type: boolean}
+    critical_count: {type: integer}
+    high_count: {type: integer}
+    findings: {type: array, items: {type: object}}
+    summary: {type: string}
+metadata:
+  tags: [shared, security, reusable]

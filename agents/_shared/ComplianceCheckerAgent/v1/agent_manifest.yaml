@@ -1,0 +1,37 @@
+id: _shared/ComplianceCheckerAgent/v1
+domain: _shared
+pack: core
+category: security-analysis
+version: "1.0.0"
+description: "Checks code against compliance frameworks. Context-driven."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: chain_of_thought
+tools:
+  - name: file_read
+    description: "Read files"
+    pack: "toolpack://core/filesystem"
+  - name: search_code
+    description: "Search patterns"
+    pack: "toolpack://core/search"
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+input_schema:
+  type: object
+  properties:
+    task_description: {type: string}
+output_schema:
+  type: object
+  required:
+    - compliant
+    - violations
+    - summary
+  properties:
+    compliant: {type: string}
+    violations: {type: string}
+    summary: {type: string}
+metadata:
+  tags: [shared, reusable]

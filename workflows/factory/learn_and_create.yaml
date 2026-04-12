@@ -1,0 +1,84 @@
+name: learn_and_create
+domain: _factory
+version: "1.0.0"
+description: "Full meta-loop: scan repo -> extract context -> generate domain -> validate"
+
+steps:
+  - name: learn
+    agent: _factory/LearnAgent/v1
+    description: "Scan target repository to extract patterns, stack, conventions"
+    gate:
+      name: learn_gate
+      condition: "status == success"
+      on_fail: abort
+
+  - name: context
+    agent: _factory/ContextAgent/v1
+    depends_on: [learn]
+    description: "Generate standards.md and architecture.md from scan results"
+    gate:
+      name: context_gate
+      condition: "status == success"
+      on_fail: retry
+      max_retries: 1
+
+  - name: generate
+    agent: _factory/AgentFactoryAgent/v1
+    depends_on: [learn, context]
+    description: "Generate complete domain with agents, workflows, grading criteria"
+    gate:
+      name: generate_gate
+      condition: "status == success"
+      on_fail: retry
+      max_retries: 2
+
+  - name: validate
+    agent: _factory/ValidateTestAgent/v1
+    depends_on: [generate]
+    description: "Validate generated domain and run structural checks"
+    gate:
+      name: validate_gate
+      condition: "status == success"
+      on_fail: retry
+      max_retries: 1
+      fallback_step: generate
+
+reset_points:
+  - generate
+  - validate
+
+budget:
+  max_tokens: 300000
+  max_cost_usd: 15.0
+  max_duration_seconds: 1800
+
+ports:
+  - name: repo_path
+    direction: ingress
+    schema:
+      type: object
+      required: [repo_path]
+  - name: generated_domain
+    direction: egress
+    schema:
+      type: object
+      required: [domain_dir, validation_passed]
+
+feedback_loops:
+  - name: validate_to_generate
+    from_step: validate
+    to_step: generate
+    condition: "validate.validation_passed == false"
+    max_iterations: 2
+    feedback_format: |
+      Validation found these issues:
+      {validate.issues_found}
+
+      Suggested fixes:
+      {validate.fix_suggestions}
+
+      Regenerate the domain with these fixes applied.
+
+metadata:
+  author: platform-team
+  tags: [factory, meta-agent, auto-generate]

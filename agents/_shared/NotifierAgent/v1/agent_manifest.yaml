@@ -1,0 +1,35 @@
+id: _shared/NotifierAgent/v1
+domain: _shared
+pack: core
+category: cost-optimized
+version: "1.0.0"
+description: "Sends notifications — Slack, GitHub, webhooks. Context-driven."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: react
+  max_react_steps: 5
+tools:
+  - name: shell_exec
+    description: "Execute notification commands"
+    pack: "toolpack://core/shell"
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: allow
+  network_access: deny
+input_schema:
+  type: object
+  required: [channel, message]
+  properties:
+    channel: {type: string}
+    message: {type: string}
+    recipients: {type: array, items: {type: string}}
+output_schema:
+  type: object
+  required: [sent, channel, summary]
+  properties:
+    sent: {type: boolean}
+    channel: {type: string}
+    summary: {type: string}
+metadata:
+  tags: [shared, notification, reusable]

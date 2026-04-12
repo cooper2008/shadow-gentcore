@@ -1,0 +1,17 @@
+threshold: 0.80
+
+criteria:
+  - name: has_basic_tools
+    type: automated
+    weight: 2.0
+    check: "mcp_config is not None and tool_packs is not None"
+
+  - name: discovery_completeness
+    type: automated
+    weight: 1.5
+    check: "discovery_quality.tools_matched_pct >= 0"
+
+  - name: quality_check
+    type: llm_judge
+    weight: 1.0
+    prompt: "Are the discovered tools relevant to the domain described in the knowledge map? Is the MCP config valid YAML with correct structure? Are gaps honestly reported rather than hidden? Do the tool packs include the universal basics (file_read, file_write, shell_exec, search_code)?"

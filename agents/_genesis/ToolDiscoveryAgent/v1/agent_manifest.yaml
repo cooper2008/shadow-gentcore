@@ -1,0 +1,89 @@
+id: _genesis/ToolDiscoveryAgent/v1
+domain: _genesis
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Discovers what tools and systems a domain needs, matches against available tool packs and MCP servers, and generates integration config. Third agent in the Genesis pipeline."
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: react
+  max_react_steps: 15
+
+tools:
+  - name: file_read
+    description: "Read tool pack definitions and config files"
+    pack: "toolpack://core/filesystem"
+  - name: search_files
+    description: "Find files by name pattern"
+    pack: "toolpack://core/search"
+  - name: list_dir
+    description: "List directory contents"
+    pack: "toolpack://core/search"
+  - name: search_code
+    description: "Search for tool definitions and patterns in source"
+    pack: "toolpack://core/search"
+
+constraints:
+  read_only: true
+
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+
+input_schema:
+  type: object
+  required: [knowledge_map]
+  properties:
+    knowledge_map:
+      type: object
+      description: "Full knowledge_map output from KnowledgeMapperAgent"
+    industry:
+      type: string
+      description: "Industry context for tool recommendations"
+
+output_schema:
+  type: object
+  required: [tools_discovered, mcp_config, tool_packs, discovery_quality]
+  properties:
+    tools_discovered:
+      type: array
+      items:
+        type: object
+        required: [name, system, purpose, status, integration]
+        properties:
+          name: {type: string}
+          system: {type: string}
+          purpose: {type: string}
+          status:
+            type: string
+            enum: [available, needs_install, not_found, manual_only]
+          integration:
+            type: string
+            enum: [mcp_server, tool_pack, shell_command]
+    mcp_config:
+      type: string
+      description: "Ready-to-use YAML configuration for MCP servers"
+    tool_packs:
+      type: array
+      items: {type: string}
+      description: "List of tool pack identifiers to include"
+    gaps:
+      type: array
+      items: {type: string}
+      description: "Tools needed but not available in the framework"
+    discovery_quality:
+      type: object
+      required: [tools_matched_pct, tools_available_pct]
+      properties:
+        tools_matched_pct: {type: number, minimum: 0, maximum: 100}
+        tools_available_pct: {type: number, minimum: 0, maximum: 100}
+
+grading_criteria_ref: grading_criteria.yaml
+
+metadata:
+  author: platform-team
+  tags: [genesis, tools, discovery, mcp, meta-agent]

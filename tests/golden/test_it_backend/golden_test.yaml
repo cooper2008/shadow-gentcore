@@ -1,0 +1,49 @@
+name: golden_it_backend
+description: "Genesis must produce a valid IT backend domain from examples/backend_fastapi scan"
+industry: software
+timeout_seconds: 300
+test_mode: full_pipeline
+
+source_config:
+  sources:
+    - path: "examples/backend_fastapi"
+      type: "git_repo"
+  industry: "software"
+  domain_name: "test_backend_fastapi"
+
+assertions:
+  - agent: SourceScannerAgent
+    checks:
+      - "status == success"
+      - "len(inventory) >= 5"
+
+  - agent: KnowledgeMapperAgent
+    checks:
+      - "coverage.overall > 30"
+
+  - agent: AgentArchitectAgent
+    checks:
+      - "design_quality.dag_valid == true"
+      - "design_quality.agent_count >= 3"
+      - "design_quality.agent_count <= 10"
+
+  - agent: AgentBuilderAgent
+    checks:
+      - "build_quality.completion_pct >= 90"
+
+  - agent: QualityGateAgent
+    checks:
+      - "overall_score > 50"
+
+file_assertions:
+  - path: "domain.yaml"
+    exists: true
+  - path: "context/standards.md"
+    exists: true
+    min_lines: 20
+  - path: "workflows/"
+    has_files: true
+
+metadata:
+  author: platform-team
+  created: "2026-04-07"

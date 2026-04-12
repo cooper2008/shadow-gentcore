@@ -1,0 +1,57 @@
+id: _factory/ContextAgent/v1
+domain: _factory
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Generates standards.md and architecture.md documents from a repository scan"
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: chain_of_thought
+
+tools:
+  - name: file_read
+    description: "Read reference context documents for format examples"
+    pack: "toolpack://core/filesystem"
+
+constraints:
+  output_format: markdown
+  no_file_modification: true
+
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+
+input_schema:
+  type: object
+  required: [scan_result]
+  properties:
+    scan_result:
+      type: object
+      description: "Structured output from LearnAgent"
+    domain_name:
+      type: string
+    reference_standards_path:
+      type: string
+      description: "Optional path to example standards.md to use as format template"
+
+output_schema:
+  type: object
+  required: [standards_md, architecture_md, tech_summary]
+  properties:
+    standards_md:
+      type: string
+      description: "Full markdown content for context/standards.md"
+    architecture_md:
+      type: string
+      description: "Full markdown content for context/architecture.md"
+    tech_summary:
+      type: string
+      description: "One-paragraph summary for domain.yaml purpose field"
+
+metadata:
+  author: platform-team
+  tags: [factory, context, standards]

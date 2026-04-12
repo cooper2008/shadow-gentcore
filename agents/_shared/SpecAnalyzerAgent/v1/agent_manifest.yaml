@@ -1,0 +1,40 @@
+id: _shared/SpecAnalyzerAgent/v1
+domain: _shared
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Analyzes requirements and produces structured specs. Context-driven."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: chain_of_thought
+  fallback: react
+  max_react_steps: 8
+tools:
+  - name: file_read
+    description: "Read existing source"
+    pack: "toolpack://core/filesystem"
+  - name: search_code
+    description: "Search existing patterns"
+    pack: "toolpack://core/search"
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+input_schema:
+  type: object
+  required: [feature_description]
+  properties:
+    feature_description: {type: string}
+    existing_code_path: {type: string}
+output_schema:
+  type: object
+  required: [spec, summary]
+  properties:
+    spec: {type: object}
+    summary: {type: string}
+    files_to_create: {type: array, items: {type: string}}
+    files_to_modify: {type: array, items: {type: string}}
+metadata:
+  author: platform-team
+  tags: [shared, spec, reusable]

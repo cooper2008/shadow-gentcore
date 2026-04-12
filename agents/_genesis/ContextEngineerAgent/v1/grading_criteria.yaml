@@ -1,0 +1,17 @@
+threshold: 0.85
+
+criteria:
+  - name: standards_exists
+    type: automated
+    weight: 2.0
+    check: "len(documents.standards_md) > 0"
+
+  - name: quality_score
+    type: automated
+    weight: 2.0
+    check: "quality_scores.overall >= 50"
+
+  - name: content_quality
+    type: llm_judge
+    weight: 1.5
+    prompt: "Is standards.md well-structured and actionable? Does it tell agents what tools and conventions to use? Are reference docs detailed enough to be useful? Is the compliance draft capturing real rules? Is the glossary comprehensive for the domain?"

@@ -1,0 +1,26 @@
+id: "_maintenance/DocGardenerAgent/v1"
+name: DocGardenerAgent
+domain: _maintenance
+version: v1
+category: documentation
+description: "Scans agent and domain manifests for missing or stale documentation. Produces a freshness report."
+system_prompt_ref: "agents/_maintenance/DocGardenerAgent/v1/system_prompt.md"
+execution_mode: chain_of_thought
+tools: []
+input_schema:
+  type: object
+  properties:
+    scan_paths:
+      type: array
+      items:
+        type: string
+      description: "Paths to scan for documentation freshness"
+output_schema:
+  type: object
+  properties:
+    freshness_report:
+      type: object
+    stale_count:
+      type: integer
+    missing_count:
+      type: integer

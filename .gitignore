@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Example/sample projects (not part of the SDK)
+examples/
+sample_project/
+
+# Generated genesis/domain pipeline artefacts
+domain-*/
+project-output/
+.genesis_steps/
+.domain_steps/
+*.genesis_output/
+scan_output.json
+scan_results.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.*
+*.key

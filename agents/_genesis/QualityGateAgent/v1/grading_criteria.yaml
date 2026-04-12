@@ -1,0 +1,22 @@
+threshold: 0.80
+
+criteria:
+  - name: has_findings
+    type: automated
+    weight: 2.0
+    check: "issues is not None"
+
+  - name: has_targeted_feedback
+    type: automated
+    weight: 2.0
+    check: "targeted_feedback is not None"
+
+  - name: score_reasonable
+    type: automated
+    weight: 1.5
+    check: "overall_score >= 0"
+
+  - name: assessment_quality
+    type: llm_judge
+    weight: 2.0
+    prompt: "Is the validation thorough? Does targeted_feedback point to specific files with actionable fix suggestions? Is the scoring fair and consistent? Does every targeted_feedback entry include target_file, target_agent, issue, fix_suggestion, and severity?"

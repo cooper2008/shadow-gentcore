@@ -1,0 +1,36 @@
+id: _shared/EnvironmentValidatorAgent/v1
+domain: _shared
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Validates environment health — config, connectivity, versions. Context-driven."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: react
+  max_react_steps: 10
+tools:
+  - name: shell_exec
+    description: "Run health checks"
+    pack: "toolpack://core/shell"
+  - name: file_read
+    description: "Read config files"
+    pack: "toolpack://core/filesystem"
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: allow
+  network_access: deny
+input_schema:
+  type: object
+  properties:
+    environment: {type: string, default: "local"}
+    checks: {type: array, items: {type: string}}
+output_schema:
+  type: object
+  required: [all_checks_passed, check_results, summary]
+  properties:
+    all_checks_passed: {type: boolean}
+    check_results: {type: array, items: {type: object}}
+    summary: {type: string}
+metadata:
+  tags: [shared, validation, devops, reusable]

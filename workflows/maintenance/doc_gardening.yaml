@@ -1,0 +1,13 @@
+name: doc_gardening
+domain: _maintenance
+version: "1.0.0"
+steps:
+  - name: scan_docs
+    agent: "_maintenance/DocGardenerAgent/v1"
+    depends_on: []
+  - name: quality_score
+    agent: "_maintenance/QualityScoreAgent/v1"
+    depends_on: [scan_docs]
+  - name: report
+    agent: "_maintenance/DocGardenerAgent/v1"
+    depends_on: [quality_score]

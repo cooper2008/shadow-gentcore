@@ -1,0 +1,41 @@
+id: _shared/ChangelogAgent/v1
+domain: _shared
+pack: core
+category: cost-optimized
+version: "1.0.0"
+description: "Generates changelog from git history. Context-driven."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: react
+  max_react_steps: 12
+tools:
+  - name: shell_exec
+    description: "Execute commands"
+    pack: "toolpack://core/shell"
+  - name: file_read
+    description: "Read files"
+    pack: "toolpack://core/filesystem"
+  - name: file_write
+    description: "Write files"
+    pack: "toolpack://core/filesystem"
+permissions:
+  file_edit: allow
+  file_create: allow
+  shell_command: allow
+  network_access: deny
+input_schema:
+  type: object
+  properties:
+    task_description: {type: string}
+output_schema:
+  type: object
+  required:
+    - changelog_updated
+    - entries_added
+    - summary
+  properties:
+    changelog_updated: {type: string}
+    entries_added: {type: string}
+    summary: {type: string}
+metadata:
+  tags: [shared, reusable]

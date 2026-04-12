@@ -1,0 +1,57 @@
+id: _factory/ValidateTestAgent/v1
+domain: _factory
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Validates a generated domain passes structural checks and optionally dry-runs the workflow"
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: react
+  max_react_steps: 15
+
+tools:
+  - name: file_read
+    description: "Read generated manifests to inspect"
+    pack: "toolpack://core/filesystem"
+  - name: search_files
+    description: "Verify expected files exist in generated domain"
+    pack: "toolpack://core/search"
+  - name: shell_exec
+    description: "Run ./ai validate against the generated domain"
+    pack: "toolpack://core/shell"
+
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: allow
+  network_access: deny
+
+input_schema:
+  type: object
+  required: [domain_dir]
+  properties:
+    domain_dir:
+      type: string
+      description: "Path to the generated domain directory"
+
+output_schema:
+  type: object
+  required: [validation_passed, issues_found, fix_suggestions]
+  properties:
+    validation_passed:
+      type: boolean
+    issues_found:
+      type: array
+      items: {type: string}
+    fix_suggestions:
+      type: array
+      items: {type: string}
+    files_checked:
+      type: array
+      items: {type: string}
+
+metadata:
+  author: platform-team
+  tags: [factory, validate, test]

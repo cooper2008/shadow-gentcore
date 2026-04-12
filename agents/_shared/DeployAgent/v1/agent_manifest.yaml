@@ -1,0 +1,41 @@
+id: _shared/DeployAgent/v1
+domain: _shared
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Executes deployments safely — plan first, dry-run, then deploy. Context-driven."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: plan_execute
+  fallback: react
+  max_react_steps: 12
+  max_plan_steps: 6
+tools:
+  - name: shell_exec
+    description: "Execute deployment commands"
+    pack: "toolpack://core/shell"
+  - name: file_read
+    description: "Read deployment configs"
+    pack: "toolpack://core/filesystem"
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: allow
+  network_access: deny
+input_schema:
+  type: object
+  required: [target_environment]
+  properties:
+    target_environment: {type: string}
+    deploy_strategy: {type: string, default: "rolling"}
+    dry_run: {type: boolean, default: true}
+output_schema:
+  type: object
+  required: [deploy_status, rollback_command, summary]
+  properties:
+    deploy_status: {type: string}
+    rollback_command: {type: string}
+    health_check_passed: {type: boolean}
+    summary: {type: string}
+metadata:
+  tags: [shared, deploy, devops, reusable]

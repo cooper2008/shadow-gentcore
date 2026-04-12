@@ -1,0 +1,85 @@
+# Platform Safety Rules (Non-Negotiable)
+#
+# These rules form the safety floor — they CANNOT be loosened by any
+# agent manifest, workflow override, or runtime override.
+#
+# Hot-reloaded: changes to this file take effect on the next tool call
+# without restarting the CLI.
+
+platform:
+  # Commands that are ALWAYS blocked regardless of agent permissions
+  blocked_commands:
+    - "rm -rf /"
+    - "rm -rf /*"
+    - "mkfs"
+    - "dd if=/dev"
+    - ":(){ :|:& };:"     # fork bomb
+    - "chmod -R 777 /"
+    - "shutdown"
+    - "reboot"
+    - "halt"
+    - "> /dev/sda"
+
+  # Code patterns blocked in file_write content
+  blocked_content_patterns:
+    - "eval\\("
+    - "exec\\("
+    - "__import__\\("
+    - "subprocess\\.call.*shell=True"
+
+  # Sensitive data patterns — blocked in output
+  sensitive_patterns:
+    - "(api[_-]?key|secret[_-]?key|password)\\s*[:=]\\s*['\"][^'\"]{8,}['\"]"
+    - "BEGIN\\s+(RSA\\s+)?PRIVATE\\s+KEY"
+    - "AKIA[0-9A-Z]{16}"        # AWS access key
+    - "xox[bpras]-[0-9a-zA-Z]+" # Slack token
+
+  # Workspace bounds — agents can never write outside these
+  require_workspace_bounds: true
+  global_forbidden_paths:
+    - ".env"
+    - ".env.local"
+    - "secrets/"
+    - ".git/config"
+    - "~/.ssh/"
+    - "~/.aws/credentials"
+
+  # Budget safety — absolute maximums that cannot be overridden
+  max_budget_tokens: 1000000    # 1M tokens per workflow
+  max_budget_cost_usd: 50.0     # $50 per workflow
+  max_file_size_kb: 10000       # 10MB per file write
+
+  # Audit
+  audit_all_tool_calls: true
+  audit_all_permission_decisions: true
+
+# Default permissions for actions (baseline — can be loosened by agent/domain)
+defaults:
+  file_read: allow
+  file_write: ask
+  file_edit: ask
+  file_delete: deny
+  file_create: ask
+  shell_command: ask
+  network_access: deny
+  browser_access: deny
+
+# Per-category permission overrides (layer 2)
+category_overrides:
+  fast-codegen:
+    file_write: allow
+    file_edit: allow
+    file_create: allow
+    shell_command: ask
+
+  reasoning:
+    file_write: deny
+    file_edit: deny
+    file_create: deny
+    shell_command: deny
+
+  security-analysis:
+    file_write: deny
+    file_edit: deny
+    shell_command: deny
+    network_access: deny

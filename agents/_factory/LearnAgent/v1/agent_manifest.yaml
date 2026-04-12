@@ -1,0 +1,96 @@
+id: _factory/LearnAgent/v1
+domain: _factory
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Scans a repository to extract tech stack, patterns, conventions, and architecture"
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: plan_execute
+  fallback: react
+  max_react_steps: 20
+  max_plan_steps: 8
+
+tools:
+  - name: file_read
+    description: "Read source files, configs, READMEs"
+    pack: "toolpack://core/filesystem"
+  - name: list_dir
+    description: "List directory contents"
+    pack: "toolpack://core/search"
+  - name: search_code
+    description: "Search for patterns in source files"
+    pack: "toolpack://core/search"
+  - name: search_files
+    description: "Find files by name pattern"
+    pack: "toolpack://core/search"
+
+constraints:
+  max_files_to_read: 50
+  read_only: true
+  no_external_calls: true
+
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+
+input_schema:
+  type: object
+  properties:
+    repo_path:
+      type: string
+      description: "Single repo path (for backward compat)"
+    repo_paths:
+      type: array
+      items: {type: string}
+      description: "Multiple repo paths to scan together (e.g., infra repo + app repo + templates repo)"
+    focus_areas:
+      type: array
+      items: {type: string}
+      description: "Optional focus: api, frontend, data, infra, devops, cicd"
+
+output_schema:
+  type: object
+  required: [tech_stack, file_structure, patterns, conventions]
+  properties:
+    tech_stack:
+      type: object
+      properties:
+        language: {type: string}
+        framework: {type: string}
+        test_framework: {type: string}
+        linter: {type: string}
+        package_manager: {type: string}
+        key_dependencies: {type: array, items: {type: string}}
+    file_structure:
+      type: object
+      properties:
+        tree_summary: {type: string}
+        source_dirs: {type: array, items: {type: string}}
+        test_dirs: {type: array, items: {type: string}}
+        config_files: {type: array, items: {type: string}}
+    patterns:
+      type: array
+      items:
+        type: object
+        properties:
+          name: {type: string}
+          description: {type: string}
+          file_examples: {type: array, items: {type: string}}
+    conventions:
+      type: object
+      properties:
+        naming: {type: string}
+        imports: {type: string}
+        error_handling: {type: string}
+        typing: {type: string}
+        testing: {type: string}
+        documentation: {type: string}
+
+metadata:
+  author: platform-team
+  tags: [factory, learn, repo-scan]

@@ -1,0 +1,108 @@
+id: _genesis/QualityGateAgent/v1
+domain: _genesis
+pack: core
+category: security-analysis
+version: "1.0.0"
+description: "Comprehensively validates a generated domain — checks structure, completeness, coherence, runs dry-run tests, and produces targeted feedback telling exactly which file has issues and which genesis agent should fix it."
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: react
+  max_react_steps: 25
+
+tools:
+  - name: file_read
+    description: "Read manifests, prompts, configs, and generated files"
+    pack: "toolpack://core/filesystem"
+  - name: search_files
+    description: "Find files by name pattern"
+    pack: "toolpack://core/search"
+  - name: list_dir
+    description: "List directory contents"
+    pack: "toolpack://core/search"
+  - name: shell_exec
+    description: "Run validation commands (e.g., ./ai validate)"
+    pack: "toolpack://core/shell"
+
+constraints:
+  read_only_except_shell: true
+
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: allow
+  network_access: deny
+
+input_schema:
+  type: object
+  required: [domain_dir]
+  properties:
+    domain_dir:
+      type: string
+      description: "Path to the generated domain directory to validate"
+    knowledge_map:
+      type: object
+      description: "Optional output from KnowledgeMapperAgent for cross-reference validation"
+    tools_discovered:
+      type: object
+      description: "Optional output from ToolDiscoveryAgent for cross-reference validation"
+
+output_schema:
+  type: object
+  required: [validation_passed, overall_score, issues, targeted_feedback]
+  properties:
+    validation_passed:
+      type: boolean
+      description: "Whether the domain passes minimum quality threshold"
+    overall_score:
+      type: number
+      minimum: 0
+      maximum: 100
+      description: "Aggregate quality score for the domain (0-100)"
+    issues:
+      type: object
+      required: [structural, completeness, coherence, dry_run, cross_reference]
+      properties:
+        structural:
+          type: array
+          items: {type: string}
+          description: "Missing files, unparseable YAML, missing required fields"
+        completeness:
+          type: array
+          items: {type: string}
+          description: "Missing agent files, dangling workflow references, incomplete domain.yaml"
+        coherence:
+          type: array
+          items: {type: string}
+          description: "Schema chain mismatches, invalid gate conditions, stale prompt references"
+        dry_run:
+          type: array
+          items: {type: string}
+          description: "Errors from ./ai validate dry-run"
+        cross_reference:
+          type: array
+          items: {type: string}
+          description: "Gaps found when comparing against knowledge_map or tools_discovered"
+    targeted_feedback:
+      type: array
+      items:
+        type: object
+        required: [target_file, target_agent, issue, fix_suggestion, severity]
+        properties:
+          target_file: {type: string}
+          target_agent: {type: string}
+          issue: {type: string}
+          fix_suggestion: {type: string}
+          severity:
+            type: string
+            enum: [error, warning, info]
+    agent_scores:
+      type: object
+      description: "Per-agent quality scores (agent_id -> score 0-100)"
+
+grading_criteria_ref: grading_criteria.yaml
+
+metadata:
+  author: platform-team
+  tags: [genesis, validation, quality-gate, meta-agent]

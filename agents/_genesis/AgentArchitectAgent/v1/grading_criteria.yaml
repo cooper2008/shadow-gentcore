@@ -1,0 +1,22 @@
+threshold: 0.85
+
+criteria:
+  - name: dag_valid
+    type: automated
+    weight: 3.0
+    check: "design_quality.dag_valid == true"
+
+  - name: agent_count
+    type: automated
+    weight: 1.5
+    check: "design_quality.agent_count >= 4"
+
+  - name: has_gates
+    type: automated
+    weight: 2.0
+    check: "design_quality.has_compliance_gates == true"
+
+  - name: design_coherence
+    type: llm_judge
+    weight: 2.0
+    prompt: "Does the agent roster cover all identified workflows? Are responsibilities well-separated? Is the workflow DAG logical with no cycles? Do tool assignments make sense and follow least privilege? Are grading specs meaningful and not trivial?"

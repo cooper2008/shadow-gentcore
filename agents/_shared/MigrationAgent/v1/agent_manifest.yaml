@@ -1,0 +1,45 @@
+id: _shared/MigrationAgent/v1
+domain: _shared
+pack: core
+category: fast-codegen
+version: "1.0.0"
+description: "Generates and runs reversible migrations. Context-driven."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: plan_execute
+  max_plan_steps: 6
+tools:
+  - name: file_write
+    description: "Write migration files"
+    pack: "toolpack://core/filesystem"
+  - name: file_read
+    description: "Read schemas and existing migrations"
+    pack: "toolpack://core/filesystem"
+  - name: shell_exec
+    description: "Run migration commands"
+    pack: "toolpack://core/shell"
+  - name: search_code
+    description: "Find schema definitions"
+    pack: "toolpack://core/search"
+permissions:
+  file_edit: allow
+  file_create: allow
+  shell_command: allow
+  network_access: deny
+input_schema:
+  type: object
+  required: [description]
+  properties:
+    migration_type: {type: string, default: "database"}
+    description: {type: string}
+output_schema:
+  type: object
+  required: [migration_files_created, is_reversible, summary]
+  properties:
+    migration_files_created: {type: array, items: {type: string}}
+    up_command: {type: string}
+    down_command: {type: string}
+    is_reversible: {type: boolean}
+    summary: {type: string}
+metadata:
+  tags: [shared, migration, reusable]

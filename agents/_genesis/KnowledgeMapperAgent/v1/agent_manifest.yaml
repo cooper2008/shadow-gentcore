@@ -1,0 +1,112 @@
+id: _genesis/KnowledgeMapperAgent/v1
+domain: _genesis
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Classifies scanned inventory into framework knowledge categories, assesses coverage, and identifies gaps. Second agent in the Genesis pipeline."
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: chain_of_thought
+
+tools:
+  - name: file_read
+    description: "Re-read source files if needed for classification"
+    pack: "toolpack://core/filesystem"
+
+constraints:
+  no_file_modification: true
+
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+
+input_schema:
+  type: object
+  required: [scan_result]
+  properties:
+    scan_result:
+      type: object
+      description: "Split scan output from SourceScannerAgent (reference_scan, target_scan, docs_scan)"
+    industry:
+      type: string
+      description: "Industry context to improve classification accuracy"
+
+output_schema:
+  type: object
+  required: [knowledge_map, coverage, gaps]
+  properties:
+    knowledge_map:
+      type: object
+      properties:
+        standards_sources:
+          type: array
+          items: {type: object}
+          description: "Standards, guidelines, coding conventions"
+        reference_topics:
+          type: array
+          items: {type: object}
+          description: "Reference material, documentation, specs"
+        workflow_processes:
+          type: array
+          items: {type: object}
+          description: "Procedures, SOPs, step-by-step processes"
+        compliance_rules:
+          type: array
+          items: {type: object}
+          description: "Policies, regulations, compliance requirements"
+        output_templates:
+          type: array
+          items: {type: object}
+          description: "Templates, forms, boilerplate documents"
+        glossary_terms:
+          type: array
+          items: {type: object}
+          description: "Definitions, glossaries, terminology"
+        roles:
+          type: array
+          items: {type: object}
+          description: "Org charts, role definitions, RACI matrices"
+        training_content:
+          type: array
+          items: {type: object}
+          description: "Training material, tutorials, onboarding docs"
+        examples:
+          type: array
+          items: {type: object}
+          description: "Case studies, worked examples, sample implementations"
+        unclassified:
+          type: array
+          items: {type: object}
+          description: "Items that could not be classified"
+    coverage:
+      type: object
+      required: [standards, workflows, compliance, tools, roles, overall]
+      properties:
+        standards: {type: number, minimum: 0, maximum: 100}
+        workflows: {type: number, minimum: 0, maximum: 100}
+        compliance: {type: number, minimum: 0, maximum: 100}
+        tools: {type: number, minimum: 0, maximum: 100}
+        roles: {type: number, minimum: 0, maximum: 100}
+        overall: {type: number, minimum: 0, maximum: 100}
+    gaps:
+      type: array
+      items:
+        type: object
+        required: [category, description, severity, suggestion]
+        properties:
+          category: {type: string}
+          description: {type: string}
+          severity:
+            type: string
+            enum: [critical, warning, info]
+          suggestion: {type: string}
+
+grading_criteria_ref: grading_criteria.yaml
+
+metadata:
+  author: platform-team
+  tags: [genesis, classification, knowledge-map, meta-agent]

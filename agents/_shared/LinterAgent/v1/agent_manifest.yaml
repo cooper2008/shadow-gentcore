@@ -1,0 +1,38 @@
+id: _shared/LinterAgent/v1
+domain: _shared
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Runs linters and type checkers. Context-driven — uses ruff, eslint, mypy, tsc, etc."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: react
+  max_react_steps: 10
+tools:
+  - name: shell_exec
+    description: "Execute lint/type check commands"
+    pack: "toolpack://core/shell"
+  - name: file_read
+    description: "Read files to understand errors"
+    pack: "toolpack://core/filesystem"
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: allow
+  network_access: deny
+input_schema:
+  type: object
+  properties:
+    path: {type: string, default: "."}
+output_schema:
+  type: object
+  required: [lint_passed, error_count, summary]
+  properties:
+    lint_passed: {type: boolean}
+    error_count: {type: integer}
+    errors: {type: array, items: {type: object, properties: {file: {type: string}, line: {type: integer}, rule: {type: string}, message: {type: string}}}}
+    type_check_passed: {type: boolean}
+    summary: {type: string}
+metadata:
+  author: platform-team
+  tags: [shared, linting, reusable]

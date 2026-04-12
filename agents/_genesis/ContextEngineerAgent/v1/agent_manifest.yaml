@@ -1,0 +1,96 @@
+id: _genesis/ContextEngineerAgent/v1
+domain: _genesis
+pack: core
+category: fast-codegen
+version: "1.0.0"
+description: "Generates high-quality context documents (standards.md, reference docs, glossary, compliance draft) from classified knowledge. Produces Layer 1 and Layer 2 knowledge for domain agents."
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: plan_execute
+  fallback: react
+  max_react_steps: 15
+  max_plan_steps: 8
+
+tools:
+  - name: file_read
+    description: "Read source files using content_ref paths from scanner inventory"
+    pack: "toolpack://core/filesystem"
+  - name: search_code
+    description: "Search source code for patterns, conventions, naming styles"
+    pack: "toolpack://core/search"
+  - name: list_dir
+    description: "List directory contents to discover file structure"
+    pack: "toolpack://core/search"
+
+constraints:
+  output_format: markdown_and_yaml
+  no_file_modification: true
+
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+
+input_schema:
+  type: object
+  required: [knowledge_map]
+  properties:
+    knowledge_map:
+      type: object
+      description: "Classified knowledge map from KnowledgeMapperAgent"
+    scan_result:
+      type: object
+      description: "Source scan inventory from SourceScannerAgent (optional — for reading source docs)"
+    industry:
+      type: string
+      description: "Industry context (e.g., healthcare, fintech, manufacturing)"
+
+output_schema:
+  type: object
+  required: [documents, quality_scores]
+  properties:
+    documents:
+      type: object
+      required: [standards_md, glossary_md, reference_docs, compliance_draft]
+      properties:
+        standards_md:
+          type: string
+          description: "Content of context/standards.md (Layer 1, ≤500 lines)"
+        glossary_md:
+          type: string
+          description: "Content of context/glossary.md"
+        reference_docs:
+          type: array
+          items:
+            type: object
+            required: [filename, content, topic, depth_score]
+            properties:
+              filename: {type: string}
+              content: {type: string}
+              topic: {type: string}
+              depth_score: {type: number, minimum: 0, maximum: 100}
+        compliance_draft:
+          type: string
+          description: "YAML content for rules/compliance.yaml"
+    quality_scores:
+      type: object
+      required: [standards_completeness, reference_depth, compliance_coverage, glossary_coverage, overall]
+      properties:
+        standards_completeness: {type: number, minimum: 0, maximum: 100}
+        reference_depth: {type: number, minimum: 0, maximum: 100}
+        compliance_coverage: {type: number, minimum: 0, maximum: 100}
+        glossary_coverage: {type: number, minimum: 0, maximum: 100}
+        overall: {type: number, minimum: 0, maximum: 100}
+    generation_notes:
+      type: array
+      items: {type: string}
+      description: "Notes about generation decisions and trade-offs"
+
+grading_criteria_ref: grading_criteria.yaml
+
+metadata:
+  author: platform-team
+  tags: [genesis, context, standards, knowledge, meta-agent]

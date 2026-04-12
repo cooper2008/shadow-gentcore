@@ -1,0 +1,22 @@
+threshold: 0.85
+
+criteria:
+  - name: source_reachability
+    type: automated
+    weight: 2.0
+    check: "scan_quality.reference_depth >= 50"
+
+  - name: classification_confidence
+    type: automated
+    weight: 2.0
+    check: "scan_quality.overall >= 50"
+
+  - name: output_completeness
+    type: automated
+    weight: 1.5
+    check: "reference_scan is not None and target_scan is not None"
+
+  - name: output_quality
+    type: llm_judge
+    weight: 1.0
+    prompt: "Evaluate this source scan. Are document types correctly classified? Are confidence scores reasonable (not all 1.0 or all 0.5)? Is the inventory comprehensive enough to build a domain from? Are failed sources honestly reported?"

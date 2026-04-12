@@ -1,0 +1,80 @@
+id: _orchestrator/EvaluatorAgent/v1
+domain: _orchestrator
+pack: platform
+category: reasoning
+version: "1.0.0"
+description: "Grades agent output against a FeatureContract, producing PASS/FAIL results per criterion"
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: chain_of_thought
+  fallback: react
+  max_react_steps: 5
+
+tools:
+  - name: file_read
+    description: "Read content from a file"
+    pack: "toolpack://core/filesystem"
+  - name: search_code
+    description: "Search codebase for patterns"
+    pack: "toolpack://core/search"
+
+constraints:
+  require_justification: true
+  grading_strictness: high
+
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+
+input_schema:
+  type: object
+  required:
+    - contract
+    - output
+  properties:
+    contract:
+      type: object
+      description: "FeatureContract with criteria to evaluate against"
+    output:
+      type: object
+      description: "Agent output to evaluate"
+
+output_schema:
+  type: object
+  required:
+    - contract_id
+    - results
+    - overall_pass
+    - score
+  properties:
+    contract_id:
+      type: string
+    results:
+      type: array
+      items:
+        type: object
+        properties:
+          criterion:
+            type: string
+          status:
+            type: string
+            enum: [PASS, FAIL, SKIP]
+          justification:
+            type: string
+    overall_pass:
+      type: boolean
+    score:
+      type: number
+    feedback:
+      type: string
+
+metadata:
+  author: platform-team
+  tags:
+    - orchestrator
+    - evaluation
+    - quality

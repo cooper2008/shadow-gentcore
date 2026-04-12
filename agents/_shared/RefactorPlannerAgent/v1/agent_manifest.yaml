@@ -1,0 +1,37 @@
+id: _shared/RefactorPlannerAgent/v1
+domain: _shared
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Plans multi-file refactoring. Context-driven."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: chain_of_thought
+tools:
+  - name: file_read
+    description: "Read files"
+    pack: "toolpack://core/filesystem"
+  - name: search_code
+    description: "Search patterns"
+    pack: "toolpack://core/search"
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+input_schema:
+  type: object
+  properties:
+    task_description: {type: string}
+output_schema:
+  type: object
+  required:
+    - refactor_plan
+    - risk_assessment
+    - summary
+  properties:
+    refactor_plan: {type: string}
+    risk_assessment: {type: string}
+    summary: {type: string}
+metadata:
+  tags: [shared, reusable]

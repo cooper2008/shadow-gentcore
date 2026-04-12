@@ -1,0 +1,126 @@
+name: genesis_build
+domain: _genesis
+version: "2.0.0"
+description: "Full genesis pipeline: scan → map → discover+context → design → build → validate"
+
+steps:
+  # Layer 1: Discovery
+  - name: scan
+    agent: _genesis/SourceScannerAgent/v1
+    description: "Scan all knowledge sources, build inventory"
+    gate:
+      name: scan_gate
+      condition: "status == success"
+      on_fail: retry
+      max_retries: 2
+
+  # Layer 2: Classification
+  - name: map
+    agent: _genesis/KnowledgeMapperAgent/v1
+    depends_on: [scan]
+    description: "Classify discovered knowledge into framework categories"
+    gate:
+      name: map_gate
+      condition: "status == success"
+      on_fail: retry
+      max_retries: 1
+
+  # Layer 3: Preparation (PARALLEL)
+  - name: discover_tools
+    agent: _genesis/ToolDiscoveryAgent/v1
+    depends_on: [map]
+    description: "Research needed tools and MCP servers"
+    gate:
+      name: tools_gate
+      condition: "status == success"
+      on_fail: degrade
+
+  - name: engineer_context
+    agent: _genesis/ContextEngineerAgent/v1
+    depends_on: [map]
+    description: "Generate quality context documents"
+    gate:
+      name: context_gate
+      condition: "status == success"
+      on_fail: retry
+      max_retries: 2
+
+  # Layer 4: Design
+  - name: architect
+    agent: _genesis/AgentArchitectAgent/v1
+    depends_on: [map, discover_tools, engineer_context]
+    description: "Design agent roster, workflow DAG, tool assignments"
+    gate:
+      name: architect_gate
+      condition: "status == success"
+      on_fail: retry
+      max_retries: 1
+
+  # Layer 5: Build
+  - name: build
+    agent: _genesis/AgentBuilderAgent/v1
+    depends_on: [architect, engineer_context, discover_tools]
+    description: "Create all domain files"
+    gate:
+      name: build_gate
+      condition: "status == success"
+      on_fail: retry
+      max_retries: 2
+
+  # Layer 6: Validate
+  - name: validate
+    agent: _genesis/QualityGateAgent/v1
+    depends_on: [build]
+    description: "Comprehensive validation + dry-run"
+    gate:
+      name: validate_gate
+      condition: "status == success"
+      on_fail: retry
+      max_retries: 2
+      fallback_step: build
+
+feedback_loops:
+  - name: validate_to_build
+    from_step: validate
+    to_step: build
+    condition: "validate.validation_passed == false"
+    max_iterations: 3
+    feedback_format: |
+      Files with issues:
+      {validate.targeted_feedback}
+      Fix ONLY these files.
+
+  - name: validate_to_context
+    from_step: validate
+    to_step: engineer_context
+    condition: "validate.issues.cross_reference is not empty"
+    max_iterations: 1
+    feedback_format: |
+      Context gaps detected:
+      {validate.issues.cross_reference}
+
+reset_points:
+  - map
+  - architect
+  - build
+
+budget:
+  max_tokens: 500000
+  max_cost_usd: 25.0
+  max_duration_seconds: 3600
+
+ports:
+  - name: sources_input
+    direction: ingress
+    schema:
+      type: object
+      required: [sources]
+  - name: generated_domain
+    direction: egress
+    schema:
+      type: object
+      required: [domain_dir, validation_passed]
+
+metadata:
+  author: platform-team
+  tags: [genesis, meta-agent, auto-generate, cross-industry]

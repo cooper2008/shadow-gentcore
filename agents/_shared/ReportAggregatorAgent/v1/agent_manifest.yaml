@@ -1,0 +1,37 @@
+id: _shared/ReportAggregatorAgent/v1
+domain: _shared
+pack: core
+category: cost-optimized
+version: "1.0.0"
+description: "Aggregates workflow step outputs into a unified report. Context-driven."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: chain_of_thought
+tools:
+  - name: file_write
+    description: "Write the report"
+    pack: "toolpack://core/filesystem"
+  - name: file_read
+    description: "Read prior step outputs"
+    pack: "toolpack://core/filesystem"
+permissions:
+  file_edit: allow
+  file_create: allow
+  shell_command: deny
+  network_access: deny
+input_schema:
+  type: object
+  properties:
+    report_format: {type: string, default: "markdown"}
+    output_path: {type: string, default: "reports/"}
+output_schema:
+  type: object
+  required: [report_path, total_steps, passed_steps, summary]
+  properties:
+    report_path: {type: string}
+    total_steps: {type: integer}
+    passed_steps: {type: integer}
+    failed_steps: {type: integer}
+    summary: {type: string}
+metadata:
+  tags: [shared, report, reusable]

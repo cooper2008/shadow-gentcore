@@ -1,0 +1,24 @@
+# Domain Discovery Configuration
+#
+# The framework discovers domains from these configured paths.
+# Each entry can be path-based (local filesystem) or package-based (pip-installed).
+
+discovery:
+  # Path-based domain discovery — scan these directories for domain.yaml manifests
+  paths:
+    - ./examples/backend
+
+  # Package-based domain discovery — look for installed packages with entry points
+  # packages:
+  #   - domain-backend
+  #   - domain-qa
+
+# Domain registry — explicit domain declarations (overrides discovery)
+# Uncomment to pin specific domains:
+# registry:
+#   backend:
+#     path: ./examples/backend
+#     enabled: true
+#   qa:
+#     path: ../domain-qa
+#     enabled: false

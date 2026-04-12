@@ -1,0 +1,36 @@
+# Genesis Hardening Layer — stricter rules for genesis agents
+# Layered ON TOP of config/rules.yaml platform rules
+
+genesis:
+  # Genesis can only write to designated output directories
+  workspace_bounds:
+    forbidden_write_paths:
+      - "agents/_genesis/"
+      - "harness/"
+      - "config/rules.yaml"
+      - "config/genesis_rules.yaml"
+
+  # Higher quality thresholds
+  quality:
+    grading_pass_threshold: 0.85
+    llm_judge_required: true
+    schema_validation: strict
+
+  # Budget per genesis agent
+  per_agent_budget:
+    max_tokens: 100000
+    max_retries: 3
+
+  # Full audit trail
+  audit:
+    log_all_decisions: true
+    log_input_hashes: true
+    log_confidence_scores: true
+    retain_intermediate_outputs: true
+
+  # Self-modification safety
+  self_modification:
+    requires_golden_test_pass: true
+    requires_regression_check: true
+    cannot_reduce_thresholds: true
+    cannot_modify_golden_tests: true

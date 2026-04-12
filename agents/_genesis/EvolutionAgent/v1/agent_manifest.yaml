@@ -1,0 +1,110 @@
+id: _genesis/EvolutionAgent/v1
+domain: _genesis
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Analyzes domain agent performance after deployment, identifies patterns in failures, diagnoses root causes, and produces prioritized improvement suggestions with specific patches. The self-improving feedback loop of the Genesis framework."
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: chain_of_thought
+
+tools:
+  - name: file_read
+    description: "Read run logs, agent manifests, and domain configs for analysis"
+    pack: "toolpack://core/filesystem"
+
+constraints:
+  read_only: true
+  advisory_only: true
+
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+
+input_schema:
+  type: object
+  required: [domain_dir, run_history]
+  properties:
+    domain_dir:
+      type: string
+      description: "Path to the domain directory to analyze"
+    run_history:
+      type: array
+      items:
+        type: object
+        required: [workflow_run_id, agent_results, gate_results, output_scores]
+        properties:
+          workflow_run_id: {type: string}
+          agent_results:
+            type: array
+            items: {type: object}
+          gate_results:
+            type: array
+            items: {type: object}
+          output_scores:
+            type: object
+          user_feedback: {type: string}
+
+output_schema:
+  type: object
+  required: [improvements, domain_health]
+  properties:
+    run_summary:
+      type: object
+      required: [total_runs, success_rate, avg_score, most_failed_agent]
+      properties:
+        total_runs: {type: integer}
+        success_rate: {type: number, minimum: 0, maximum: 1}
+        avg_score: {type: number, minimum: 0, maximum: 100}
+        most_failed_agent: {type: string}
+    improvements:
+      type: array
+      items:
+        type: object
+        required: [target, change_type, priority_score, description, patch, evidence, confidence]
+        properties:
+          target:
+            type: string
+            description: "Agent or file path to improve"
+          change_type:
+            type: string
+            enum: [prompt_update, criteria_adjust, context_add, tool_add, mode_change]
+          priority_score:
+            type: number
+            description: "Impact x confidence / effort"
+          description:
+            type: string
+            description: "What to change and why"
+          patch:
+            type: string
+            description: "Specific content to add, modify, or replace"
+          evidence:
+            type: string
+            description: "Run data that supports this improvement"
+          confidence:
+            type: number
+            minimum: 0
+            maximum: 1
+    domain_health:
+      type: object
+      required: [overall_score, trend, critical_issues]
+      properties:
+        overall_score:
+          type: number
+          minimum: 0
+          maximum: 100
+        trend:
+          type: string
+          enum: [improving, stable, declining]
+        critical_issues:
+          type: integer
+
+grading_criteria_ref: grading_criteria.yaml
+
+metadata:
+  author: platform-team
+  tags: [genesis, evolution, self-improving, feedback-loop, meta-agent]

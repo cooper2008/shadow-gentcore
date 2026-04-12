@@ -1,0 +1,101 @@
+id: _genesis/AgentBuilderAgent/v1
+domain: _genesis
+pack: core
+category: fast-codegen
+version: "1.0.0"
+description: "Takes the architect's design and the engineer's context and creates all files for a complete domain. Builds agent manifests, system prompts, grading criteria, workflows, and configs."
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: plan_execute
+  fallback: react
+  max_react_steps: 20
+  max_plan_steps: 12
+
+tools:
+  - name: file_write
+    description: "Write agent manifests, prompts, workflows, and config files"
+    pack: "toolpack://core/filesystem"
+  - name: file_read
+    description: "Read existing files and verify written output"
+    pack: "toolpack://core/filesystem"
+  - name: list_dir
+    description: "List directory contents for verification"
+    pack: "toolpack://core/search"
+
+constraints:
+  output_format: yaml_and_markdown
+  must_generate:
+    - domain.yaml
+    - context/standards.md
+    - at_least_3_agents
+    - at_least_1_workflow
+
+permissions:
+  file_edit: allow
+  file_create: allow
+  shell_command: deny
+  network_access: deny
+
+input_schema:
+  type: object
+  required: [architect_design, context_docs, tools_config, domain_name]
+  properties:
+    architect_design:
+      type: object
+      description: "Full design spec from AgentArchitectAgent (agent_roster, workflow_design, tool_assignments, grading_specs)"
+    context_docs:
+      type: object
+      description: "Generated context documents from ContextEngineerAgent"
+    tools_config:
+      type: object
+      description: "Tool configurations from ToolDiscoveryAgent"
+    domain_name:
+      type: string
+      description: "Name of the domain to create"
+    output_dir:
+      type: string
+      description: "Directory to write domain files to"
+      default: "."
+
+output_schema:
+  type: object
+  required: [domain_dir, files_created, build_quality]
+  properties:
+    domain_dir:
+      type: string
+      description: "Root directory of the created domain"
+    files_created:
+      type: array
+      items: {type: string}
+      description: "List of file paths successfully created"
+    files_failed:
+      type: array
+      items:
+        type: object
+        required: [path, error]
+        properties:
+          path: {type: string}
+          error: {type: string}
+    agents_created:
+      type: array
+      items: {type: string}
+      description: "Names of agents whose files were created"
+    workflows_created:
+      type: array
+      items: {type: string}
+      description: "Names of workflows created"
+    build_quality:
+      type: object
+      required: [files_planned, files_written, completion_pct]
+      properties:
+        files_planned: {type: integer}
+        files_written: {type: integer}
+        completion_pct: {type: number, minimum: 0, maximum: 100}
+
+grading_criteria_ref: grading_criteria.yaml
+
+metadata:
+  author: platform-team
+  tags: [genesis, builder, codegen, domain, meta-agent]

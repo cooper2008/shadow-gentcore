@@ -1,0 +1,56 @@
+# MCP Server Configuration
+# Add community MCP servers here. Agents reference them via toolpack://mcp/<name>
+#
+# Usage:
+#   ./ai mcp add context7 --command "npx -y @upstash/context7-mcp@latest"
+#   ./ai mcp list
+#
+# Then in agent_manifest.yaml:
+#   tools:
+#     - name: query-docs
+#       pack: "toolpack://mcp/context7"
+
+servers:
+  # Context7 — fetch up-to-date library documentation for any framework
+  - name: context7
+    command: "npx -y @upstash/context7-mcp@latest"
+    transport: stdio
+    description: "Fetch current documentation for libraries and frameworks"
+    tools:
+      - name: resolve-library-id
+        description: "Resolve a library name to its Context7 ID"
+      - name: query-docs
+        description: "Query documentation for a specific library"
+
+  # Uncomment to enable:
+  # - name: puppeteer
+  #   command: "npx -y @anthropic/mcp-server-puppeteer"
+  #   transport: stdio
+  #   description: "Browser automation for testing and screenshots"
+  #   tools:
+  #     - name: puppeteer_navigate
+  #       description: "Navigate to a URL"
+  #     - name: puppeteer_screenshot
+  #       description: "Take a screenshot"
+
+  # - name: github
+  #   command: "npx -y @modelcontextprotocol/server-github"
+  #   transport: stdio
+  #   env:
+  #     GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
+  #   description: "GitHub API — code search, PRs, issues"
+  #   tools:
+  #     - name: search_repositories
+  #       description: "Search GitHub repositories"
+  #     - name: get_file_contents
+  #       description: "Get file contents from a repo"
+
+  # - name: filesystem
+  #   command: "npx -y @modelcontextprotocol/server-filesystem /path/to/dir"
+  #   transport: stdio
+  #   description: "Sandboxed filesystem access"
+  #   tools:
+  #     - name: read_file
+  #       description: "Read a file"
+  #     - name: write_file
+  #       description: "Write a file"

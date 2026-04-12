@@ -1,0 +1,44 @@
+# Agent Category Defaults
+#
+# 4-layer override system:
+#   1. Category defaults (this file)
+#   2. Agent manifest (execution_mode, constraints, permissions)
+#   3. Workflow step override (execution_mode_override per step)
+#   4. Runtime override (TaskEnvelope.execution_mode_override)
+#
+# Each layer merges on top of the previous. Later layers win on conflict.
+
+categories:
+  reasoning:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    temperature: 0.3
+    max_tokens: 4096
+    thinking:
+      enabled: true
+      budget_tokens: 8000
+
+  fast-codegen:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    temperature: 0.2
+    max_tokens: 8192
+    thinking:
+      enabled: false
+
+  security-analysis:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    temperature: 0.1
+    max_tokens: 4096
+    thinking:
+      enabled: true
+      budget_tokens: 12000
+
+  cost-optimized:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    temperature: 0.2
+    max_tokens: 4096
+    thinking:
+      enabled: false

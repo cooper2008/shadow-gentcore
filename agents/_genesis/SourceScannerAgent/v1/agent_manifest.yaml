@@ -1,0 +1,145 @@
+id: _genesis/SourceScannerAgent/v1
+domain: _genesis
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Scans knowledge sources (repos, doc folders, wikis, APIs) to discover and classify documents, code, configs, and data. First agent in the Genesis pipeline."
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: react
+  max_react_steps: 15
+
+tools:
+  - name: file_read
+    description: "Read source files, documents, configs"
+    pack: "toolpack://core/filesystem"
+  - name: list_dir
+    description: "List directory contents"
+    pack: "toolpack://core/search"
+  - name: search_files
+    description: "Find files by name pattern"
+    pack: "toolpack://core/search"
+  - name: search_code
+    description: "Search for patterns in source files"
+    pack: "toolpack://core/search"
+  - name: fetch_url
+    description: "Fetch content from URLs (wikis, API specs)"
+    pack: "toolpack://core/network"
+
+constraints:
+  max_files_to_read: 100
+  read_only: true
+
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: allow
+
+input_schema:
+  type: object
+  properties:
+    team_config:
+      type: object
+      description: "Team config from workspace.yaml (reference, target, docs, industry, focus)"
+      properties:
+        reference: {type: array}
+        target: {type: array}
+        docs: {type: array}
+        industry: {type: string}
+        focus: {type: array}
+    discover_path:
+      type: string
+      description: "Directory path for auto-discovery mode"
+    sources:
+      type: array
+      description: "Explicit source list (backward compat)"
+      items:
+        type: object
+        properties:
+          path: {type: string}
+          type: {type: string}
+    industry: {type: string}
+    focus_areas: {type: array, items: {type: string}}
+
+output_schema:
+  type: object
+  required: [reference_scan, target_scan, docs_scan, scan_quality]
+  properties:
+    reference_scan:
+      type: object
+      description: "Deep scan of reference repos — standards, patterns, conventions"
+      properties:
+        standards_extracted:
+          type: array
+          items: {type: object, properties: {name: {type: string}, description: {type: string}, source: {type: string}, content_ref: {type: string}}}
+        patterns_found:
+          type: array
+          items: {type: object, properties: {name: {type: string}, description: {type: string}, file_examples: {type: array}}}
+        conventions:
+          type: object
+          properties:
+            naming: {type: string}
+            imports: {type: string}
+            error_handling: {type: string}
+            testing: {type: string}
+        sample_files:
+          type: array
+          items: {type: string}
+    target_scan:
+      type: object
+      description: "Structure scan of target repos — tech stack, tools, workflows"
+      properties:
+        tech_stack:
+          type: object
+          properties:
+            language: {type: string}
+            framework: {type: string}
+            test_framework: {type: string}
+            linter: {type: string}
+            package_manager: {type: string}
+            key_dependencies: {type: array, items: {type: string}}
+        file_structure:
+          type: object
+          properties:
+            source_dirs: {type: array, items: {type: string}}
+            test_dirs: {type: array, items: {type: string}}
+            config_files: {type: array, items: {type: string}}
+        tools_used:
+          type: array
+          items: {type: string}
+        workflow_processes:
+          type: array
+          items: {type: object, properties: {name: {type: string}, stages: {type: array}}}
+    docs_scan:
+      type: object
+      description: "Content scan of document sources"
+      properties:
+        inventory:
+          type: array
+          items:
+            type: object
+            properties:
+              source: {type: string}
+              title: {type: string}
+              document_type: {type: string}
+              content_ref: {type: string}
+              confidence: {type: number}
+        content_refs:
+          type: array
+          items: {type: string}
+    scan_quality:
+      type: object
+      properties:
+        reference_depth: {type: number}
+        target_coverage: {type: number}
+        docs_coverage: {type: number}
+        overall: {type: number}
+
+grading_criteria_ref: grading_criteria.yaml
+
+metadata:
+  author: platform-team
+  tags: [genesis, scan, discovery, meta-agent]

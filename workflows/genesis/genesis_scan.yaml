@@ -1,0 +1,33 @@
+name: genesis_scan
+domain: _genesis
+version: "1.0.0"
+description: "Quick scan only — inventory sources and classify knowledge without building"
+
+steps:
+  - name: scan
+    agent: _genesis/SourceScannerAgent/v1
+    description: "Scan all knowledge sources, build inventory"
+    gate:
+      name: scan_gate
+      condition: "status == success"
+      on_fail: retry
+      max_retries: 2
+
+  - name: map
+    agent: _genesis/KnowledgeMapperAgent/v1
+    depends_on: [scan]
+    description: "Classify discovered knowledge into framework categories"
+    gate:
+      name: map_gate
+      condition: "status == success"
+      on_fail: retry
+      max_retries: 1
+
+budget:
+  max_tokens: 100000
+  max_cost_usd: 5.0
+  max_duration_seconds: 600
+
+metadata:
+  author: platform-team
+  tags: [genesis, scan, quick]

@@ -1,0 +1,64 @@
+name: feature_delivery
+description: "Full-stack: plan -> [backend || frontend] -> evaluate"
+version: "2.0.0"
+
+budget:
+  max_tokens: 500000
+  max_cost_usd: 25.0
+
+steps:
+  - name: plan
+    agent: _orchestrator/PlannerAgent/v1
+    description: "Produce FeatureContract"
+    gate: {condition: "status == success", on_fail: abort}
+
+  - name: api_spec
+    agent: _shared/SpecAnalyzerAgent/v1
+    depends_on: [plan]
+    description: "API spec from feature contract"
+    gate: {condition: "status == success", on_fail: abort}
+
+  - name: api_build
+    agent: _shared/CodeWriterAgent/v1
+    depends_on: [api_spec]
+    description: "Generate FastAPI code"
+    gate: {condition: "status == success", on_fail: retry, max_retries: 2}
+
+  - name: api_test
+    agent: _shared/TestRunnerAgent/v1
+    depends_on: [api_build]
+    description: "Run pytest"
+    gate: {condition: "status == success", on_fail: retry, max_retries: 2, fallback_step: api_build}
+
+  - name: component_build
+    agent: _shared/CodeWriterAgent/v1
+    depends_on: [plan]
+    description: "Generate React component (parallel with backend)"
+    gate: {condition: "status == success", on_fail: retry, max_retries: 2}
+
+  - name: component_lint
+    agent: _shared/LinterAgent/v1
+    depends_on: [component_build]
+    description: "eslint + tsc"
+    gate: {condition: "status == success", on_fail: retry, max_retries: 1, fallback_step: component_build}
+
+  - name: evaluate
+    agent: _orchestrator/EvaluatorAgent/v1
+    depends_on: [api_test, component_lint]
+    description: "Grade delivery against FeatureContract"
+    gate: {condition: "status == success", on_fail: degrade}
+
+reset_points: [api_build, component_build]
+feedback_loops:
+  - name: api_test_fail
+    from_step: api_test
+    to_step: api_build
+    condition: "api_test.all_passed == false"
+    max_iterations: 2
+  - name: lint_fail
+    from_step: component_lint
+    to_step: component_build
+    condition: "component_lint.lint_passed == false"
+    max_iterations: 2
+metadata:
+  tags: [cross-domain, full-stack, shared-agents]

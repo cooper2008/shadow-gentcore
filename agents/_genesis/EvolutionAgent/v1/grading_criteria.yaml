@@ -1,0 +1,17 @@
+threshold: 0.75
+
+criteria:
+  - name: has_summary
+    type: automated
+    weight: 1.5
+    check: "run_summary is not None"
+
+  - name: has_health
+    type: automated
+    weight: 1.5
+    check: "domain_health.overall_score >= 0"
+
+  - name: improvement_quality
+    type: llm_judge
+    weight: 2.0
+    prompt: "Are improvements evidence-based (citing specific run data)? Are patches specific and actionable (not vague suggestions)? Is prioritization reasonable (high-impact items first)? Does it avoid unnecessary changes for well-performing agents? Does it never suggest lowering quality thresholds?"

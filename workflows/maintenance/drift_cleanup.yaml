@@ -1,0 +1,13 @@
+name: drift_cleanup
+domain: _maintenance
+version: "1.0.0"
+steps:
+  - name: detect_drift
+    agent: "_maintenance/DriftCleanupAgent/v1"
+    depends_on: []
+  - name: plan_migration
+    agent: "_maintenance/DriftCleanupAgent/v1"
+    depends_on: [detect_drift]
+  - name: apply_cleanup
+    agent: "_maintenance/DriftCleanupAgent/v1"
+    depends_on: [plan_migration]

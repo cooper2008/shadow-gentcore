@@ -1,0 +1,55 @@
+name: optimize_domain
+domain: _factory
+version: "1.0.0"
+description: "Run generated agents, evaluate quality, regenerate if below threshold"
+
+steps:
+  - name: dry_run
+    agent: _factory/ValidateTestAgent/v1
+    description: "Execute the generated workflow with dry-run to verify execution flow"
+    gate:
+      name: dry_run_gate
+      condition: "status == success"
+      on_fail: abort
+
+  - name: score
+    agent: _maintenance/QualityScoreAgent/v1
+    depends_on: [dry_run]
+    description: "Score quality of generated agent manifests and prompts"
+    gate:
+      name: quality_gate
+      condition: "status == success"
+      on_fail: degrade
+
+  - name: regenerate
+    agent: _factory/AgentFactoryAgent/v1
+    depends_on: [score]
+    description: "Regenerate low-quality agents with feedback from scoring"
+    gate:
+      name: regen_gate
+      condition: "status == success"
+      on_fail: abort
+
+  - name: revalidate
+    agent: _factory/ValidateTestAgent/v1
+    depends_on: [regenerate]
+    description: "Re-validate after regeneration"
+    gate:
+      name: revalidate_gate
+      condition: "status == success"
+      on_fail: degrade
+
+feedback_loops:
+  - name: score_to_regenerate
+    from_step: score
+    to_step: regenerate
+    condition: "score.overall_score < 0.7"
+    max_iterations: 3
+
+budget:
+  max_tokens: 200000
+  max_cost_usd: 10.0
+
+metadata:
+  author: platform-team
+  tags: [factory, optimization, quality]

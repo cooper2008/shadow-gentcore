@@ -1,0 +1,50 @@
+id: _shared/CodeWriterAgent/v1
+domain: _shared
+pack: core
+category: fast-codegen
+version: "1.0.0"
+description: "Writes production code following domain standards. Context-driven — adapts to any language/framework via injected standards."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: plan_execute
+  fallback: react
+  max_react_steps: 15
+  max_plan_steps: 6
+tools:
+  - name: file_write
+    description: "Write generated code to files"
+    pack: "toolpack://core/filesystem"
+  - name: file_read
+    description: "Read existing code for patterns"
+    pack: "toolpack://core/filesystem"
+  - name: search_code
+    description: "Search codebase for patterns, imports, base classes"
+    pack: "toolpack://core/search"
+  - name: list_dir
+    description: "List directory contents"
+    pack: "toolpack://core/search"
+constraints:
+  max_file_size_kb: 500
+  forbidden_patterns: ["eval(", "exec(", "__import__"]
+permissions:
+  file_edit: allow
+  file_create: allow
+  shell_command: deny
+  network_access: deny
+input_schema:
+  type: object
+  required: [task_description]
+  properties:
+    task_description: {type: string}
+    target_directory: {type: string, default: "src/"}
+output_schema:
+  type: object
+  required: [files_created, summary]
+  properties:
+    files_created: {type: array, items: {type: string}}
+    files_modified: {type: array, items: {type: string}}
+    summary: {type: string}
+grading_criteria_ref: grading_criteria.yaml
+metadata:
+  author: platform-team
+  tags: [shared, codegen, reusable]

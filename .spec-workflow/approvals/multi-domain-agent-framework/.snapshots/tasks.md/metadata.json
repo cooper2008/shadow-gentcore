@@ -1,0 +1,14 @@
+{
+  "filePath": ".spec-workflow/specs/multi-domain-agent-framework/tasks.md",
+  "currentVersion": 1,
+  "snapshots": [
+    {
+      "version": 1,
+      "filename": "snapshot-001.json",
+      "timestamp": "2026-03-31T11:24:15.786Z",
+      "trigger": "initial",
+      "approvalId": "approval_1774956255780_l1645aidt",
+      "approvalTitle": "Approve detailed tasks for multi-domain-agent-framework"
+    }
+  ]
+}

@@ -1,0 +1,87 @@
+# Workflow Policy — Universal Capability-Pair Rules
+#
+# Instead of fixed profiles, the Validator uses universal rules:
+#   "If your workflow does X, it should also do Y"
+#
+# This works for ANY domain — development, operations, security, incident,
+# compliance, docs, or domains we haven't imagined yet.
+#
+# Teams never need to pick a profile. The rules auto-apply based on
+# what agents in the workflow actually DO.
+
+# ── CAPABILITY-PAIR RULES ──
+#
+# Format: if a workflow has capability X, it should also have capability Y.
+# Level: error (blocking) or warning (recommended).
+
+capability_rules:
+  # If you write code, you should test it
+  - if: build
+    then: verify
+    level: error
+    message: "Workflow writes code but has no verification step (lint, test). Add a step with shell_command: allow."
+
+  # If you execute commands, you should validate results
+  - if: execute
+    then: validate
+    level: error
+    message: "Workflow executes commands but has no validation step. Add a step that checks results."
+
+  # If you write code, code review is recommended
+  - if: build
+    then: review
+    level: warning
+    message: "Workflow writes code but has no review step. Consider adding a code review agent."
+
+  # If you execute deployment, planning first is recommended
+  - if: execute
+    then: plan
+    level: warning
+    message: "Workflow executes commands but has no planning step. Consider adding a plan/analysis step first."
+
+# ── UNIVERSAL REQUIREMENTS (apply to ALL domains) ──
+
+# Every workflow must have at least this many steps
+min_workflow_steps: 2
+
+# Every agent manifest should have these fields
+required_agent_fields:
+  - input_schema
+  - output_schema
+  - permissions
+  - execution_mode
+
+# Context requirements
+required_context:
+  - path: "context/standards.md"
+    min_length: 100
+    level: warning     # not blocking — new domains might not have standards yet
+
+# Budget is required
+require_budget: true
+
+# Gate policy
+gate_policy:
+  # Steps that run commands should have gates (to catch failures)
+  execute_steps_must_have_gate: true
+  verify_steps_must_have_gate: true
+
+# Quality
+quality:
+  min_system_prompt_length: 50
+
+# ── CAPABILITY CLASSIFICATION ──
+#
+# How the Validator detects capabilities from agent manifests:
+#
+#   build    = file_edit: allow OR file_create: allow (writes files)
+#   execute  = shell_command: allow (runs commands)
+#   verify   = shell_command: allow (runs checks — same as execute)
+#   validate = shell_command: allow OR read-only (checks results)
+#   review   = chain_of_thought + read-only (quality review)
+#   analyze  = read-only reasoning (analysis, diagnosis)
+#   plan     = read-only (planning, spec analysis)
+#   scan     = read-only OR shell_command (reads/scans data)
+#   report   = file_write: allow (produces reports)
+#
+# Fallback: step/agent name keywords when manifest not found.

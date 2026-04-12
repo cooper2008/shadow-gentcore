@@ -1,0 +1,13 @@
+name: quality_scoring
+domain: _maintenance
+version: "1.0.0"
+steps:
+  - name: collect_metrics
+    agent: "_maintenance/QualityScoreAgent/v1"
+    depends_on: []
+  - name: score_domains
+    agent: "_maintenance/QualityScoreAgent/v1"
+    depends_on: [collect_metrics]
+  - name: publish_scorecard
+    agent: "_maintenance/QualityScoreAgent/v1"
+    depends_on: [score_domains]

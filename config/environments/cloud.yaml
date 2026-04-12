@@ -1,0 +1,32 @@
+# Cloud Runtime Environment Configuration
+
+runtime: cloud
+
+permissions:
+  mode: non_interactive
+  default_action: deny
+
+workspace:
+  root: /workspace
+  scratch_dir: /workspace/.harness/scratch
+  runs_dir: /workspace/.harness/runs
+
+storage:
+  backend: filesystem
+  base_path: /workspace/.harness/runs
+
+credentials:
+  source: secret_manager
+  secret_manager:
+    provider: aws_secrets_manager
+    region: us-east-1
+
+output:
+  mode: json
+  verbose: false
+  structured_logging: true
+  webhook_url: null
+
+budget:
+  warn_at_percentage: 0.8
+  enforce_limits: true

@@ -1,0 +1,22 @@
+threshold: 0.85
+
+criteria:
+  - name: completion
+    type: automated
+    weight: 3.0
+    check: "build_quality.completion_pct >= 90"
+
+  - name: has_agents
+    type: automated
+    weight: 2.0
+    check: "len(agents_created) >= 1"
+
+  - name: has_workflow
+    type: automated
+    weight: 2.0
+    check: "len(workflows_created) >= 1"
+
+  - name: file_quality
+    type: llm_judge
+    weight: 1.5
+    prompt: "Are agent manifests complete with all required fields (id, domain, category, execution_mode, tools, permissions, input_schema, output_schema)? Do system prompts give clear instructions and reference context/standards.md? Do grading criteria have meaningful checks? Is domain.yaml well-structured?"
