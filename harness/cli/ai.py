@@ -910,6 +910,8 @@ def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, d
     task_input["domain_name"] = domain_name
 
     output_dir = Path(output).resolve() if output else Path(domain_path).resolve() if domain_path else Path("./output").resolve()
+    # Pass output_dir to ALL steps — AgentBuilderAgent needs it to write files to the right location
+    task_input["output_dir"] = str(output_dir)
 
     genesis_workflow = project_root / "workflows" / "genesis" / "genesis_build.yaml"
 
@@ -958,11 +960,23 @@ def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, d
     click.echo(f"Steps completed: {len(result['step_results'])}")
     for step_name, step_result in result["step_results"].items():
         status = step_result.get("status", "unknown")
-        output_preview = str(step_result.get("output", ""))[:100]
+        # Look in result.result.content for the actual agent output
+        raw = step_result.get("output", step_result.get("result", {}))
+        if isinstance(raw, dict):
+            raw = raw.get("content", "")
+        output_preview = str(raw)[:120]
         click.echo(f"  {step_name}: {status}")
         if output_preview:
             click.echo(f"    output: {output_preview}...")
     click.echo()
+
+    # Count files actually written
+    generated_files = list(output_dir.rglob("*"))
+    generated_files = [f for f in generated_files if f.is_file() and ".venv" not in str(f) and ".git" not in str(f)]
+    agent_files = [f for f in generated_files if "agents/" in str(f)]
+    click.echo(f"Generated output in: {output_dir}")
+    click.echo(f"  agent files: {len(agent_files)}")
+    click.echo(f"  total files: {len(generated_files)}")
 
     if result["status"] == "completed":
         click.echo("Genesis build complete. Next steps:")

@@ -212,6 +212,9 @@ class CompositionEngine:
                         "issues": validation["issues"],
                     })
 
+            # Ensure top-level status is set so gate conditions work
+            if "status" not in result:
+                result["status"] = "error" if result.get("error") else "completed"
             return result
         # Stub: return a placeholder result
         return {

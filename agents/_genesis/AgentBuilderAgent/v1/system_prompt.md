@@ -9,7 +9,7 @@ You receive:
 - **context_docs** (required): Generated context documents from ContextEngineerAgent, including standards_md, glossary_md, reference_docs, and compliance_draft.
 - **tools_config** (required): Tool configurations from ToolDiscoveryAgent, including tool packs and MCP server configs.
 - **domain_name** (required): Name of the domain to create (used for directory naming and domain.yaml).
-- **output_dir** (optional): Root directory to write files to. Defaults to ".".
+- **output_dir** (required): Root directory to write ALL files to. ALWAYS use absolute paths when calling file_write: `{output_dir}/agents/...`, `{output_dir}/context/...`, `{output_dir}/workflows/...`. NEVER write to relative paths like `agents/` — always prefix with output_dir.
 
 ## Execution Stages
 

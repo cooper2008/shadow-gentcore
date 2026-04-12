@@ -198,6 +198,21 @@ class AgentRunner:
                 status=RunStatus.SUCCESS,
             )
 
+            # Surface provider/API errors that were caught and stored in result
+            result_error = result.get("error") if isinstance(result, dict) else None
+            if result_error:
+                self._set_state(AgentState.FAILED, agent_id, result_error)
+                return {
+                    "result": result,
+                    "run_record": run_record,
+                    "budget_summary": budget.summary(),
+                    "state_log": list(self._state_log),
+                    "status": "error",
+                    "error": result_error,
+                    "output": "",
+                    "content": "",
+                }
+
             self._set_state(AgentState.COMPLETED, agent_id)
             return {
                 "result": result,
@@ -229,6 +244,10 @@ class AgentRunner:
                 "result": {"content": "", "error": str(exc)},
                 "run_record": run_record,
                 "budget_summary": budget.summary(),
+                "status": "error",
+                "error": str(exc),
+                "output": "",
+                "content": "",
             }
 
         except Exception as exc:
@@ -251,6 +270,10 @@ class AgentRunner:
                 "result": {"content": "", "error": str(exc)},
                 "run_record": run_record,
                 "budget_summary": budget.summary(),
+                "status": "error",
+                "error": str(exc),
+                "output": "",
+                "content": "",
             }
 
     async def run_with_reflexion(
