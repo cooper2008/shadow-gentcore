@@ -1,7 +1,8 @@
-"""BudgetTracker — enforces token and cost limits during agent execution."""
+"""BudgetTracker — enforces token, cost, and duration limits during agent execution."""
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 
@@ -10,11 +11,12 @@ class BudgetExceededError(Exception):
 
 
 class BudgetTracker:
-    """Tracks and enforces token and cost budgets for agent runs.
+    """Tracks and enforces token, cost, and duration budgets for agent runs.
 
     Supports:
     - Per-task token limits
     - Per-task cost limits (USD)
+    - Per-task duration limits (seconds)
     - Cumulative tracking across multiple calls
     - Pre-flight budget checks before LLM calls
     """
@@ -23,12 +25,15 @@ class BudgetTracker:
         self,
         max_tokens: int | None = None,
         max_cost_usd: float | None = None,
+        max_duration_seconds: float | None = None,
     ) -> None:
         self.max_tokens = max_tokens
         self.max_cost_usd = max_cost_usd
+        self.max_duration_seconds = max_duration_seconds
         self._tokens_used: int = 0
         self._cost_usd: float = 0.0
         self._call_count: int = 0
+        self._start_time: float = time.monotonic()
 
     def record_usage(self, tokens: int, cost_usd: float = 0.0) -> None:
         """Record token and cost usage from a provider call.
@@ -64,6 +69,12 @@ class BudgetTracker:
             raise BudgetExceededError(
                 f"Cost budget exceeded: ${self._cost_usd:.4f}/${self.max_cost_usd:.4f} USD"
             )
+        if self.max_duration_seconds is not None:
+            elapsed = time.monotonic() - self._start_time
+            if elapsed > self.max_duration_seconds:
+                raise BudgetExceededError(
+                    f"Duration limit exceeded: {elapsed:.1f}s > {self.max_duration_seconds}s"
+                )
 
     @property
     def tokens_used(self) -> int:
@@ -99,10 +110,13 @@ class BudgetTracker:
             "cost_limit": self.max_cost_usd,
             "cost_remaining": self.cost_remaining,
             "call_count": self._call_count,
+            "duration_seconds": time.monotonic() - self._start_time,
+            "duration_limit": self.max_duration_seconds,
         }
 
     def reset(self) -> None:
-        """Reset all usage counters."""
+        """Reset all usage counters and restart the duration clock."""
         self._tokens_used = 0
         self._cost_usd = 0.0
         self._call_count = 0
+        self._start_time = time.monotonic()

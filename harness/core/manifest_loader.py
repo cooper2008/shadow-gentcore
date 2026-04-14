@@ -11,11 +11,14 @@ Responsibilities:
 
 from __future__ import annotations
 
+import logging
 import warnings
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 class ManifestLoader:
@@ -101,6 +104,27 @@ class ManifestLoader:
                         "content": ctx_path.read_text(encoding="utf-8"),
                         "priority": 10,
                     })
+
+        # Load optional Python hooks referenced by hooks_ref field
+        hooks: dict[str, Any] = {}
+        hooks_ref = manifest.get("hooks_ref")
+        if hooks_ref:
+            hooks_path = agent_dir / hooks_ref
+            if hooks_path.exists():
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("agent_hooks", hooks_path)
+                mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+                spec.loader.exec_module(mod)  # type: ignore[union-attr]
+                for hook_name in ("pre_execute", "post_execute", "pre_tool_call"):
+                    if hasattr(mod, hook_name):
+                        hooks[hook_name] = getattr(mod, hook_name)
+            else:
+                logger.warning(
+                    "hooks_ref '%s' specified in agent manifest at '%s' but file not found — hooks skipped",
+                    hooks_ref,
+                    agent_dir,
+                )
+        manifest["_hooks"] = hooks
 
         return manifest, system_prompt, context_items
 
@@ -266,15 +290,15 @@ class ManifestLoader:
                         adapter = _at.HTTPAPIToolAdapter(tool_manifest)
                         tool_name = tool_uri.replace("tool://", "")
                         tool_executor.register_adapter(tool_name, adapter)
-        except Exception:
-            pass  # agent-tools integration is optional — don't block execution
+        except Exception as exc:
+            logger.debug("agent-tools integration unavailable, skipping toolpack registration: %s", exc)
 
         # Register MCP server tools from config/mcp_servers.yaml
         try:
             from harness.tools.mcp_loader import register_mcp_tools
             register_mcp_tools(tool_executor)
-        except Exception:
-            pass  # MCP is optional — don't block execution if config is missing
+        except Exception as exc:
+            logger.debug("MCP tools registration skipped (config missing or unavailable): %s", exc)
 
         # Build AgentRunner
         runner = AgentRunner(provider=provider, tool_executor=tool_executor)

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+from unittest.mock import patch
+
 import pytest
 
 from harness.core.budget_tracker import BudgetTracker, BudgetExceededError
@@ -69,3 +72,57 @@ class TestBudgetTracker:
         assert bt.cost_usd == 0.0
         assert bt.call_count == 0
         assert bt.tokens_remaining == 10000
+
+
+class TestBudgetTrackerDuration:
+    def test_duration_limit_not_exceeded(self) -> None:
+        """No error when elapsed time is within the limit."""
+        bt = BudgetTracker(max_duration_seconds=3600.0)
+        # monotonic starts just after __init__, so elapsed is effectively 0
+        bt.record_usage(tokens=100)  # must not raise
+
+    def test_duration_limit_exceeded(self) -> None:
+        """BudgetExceededError raised when elapsed time exceeds the limit."""
+        start = 1000.0
+        with patch("harness.core.budget_tracker.time") as mock_time:
+            mock_time.monotonic.side_effect = [
+                start,        # __init__ _start_time
+                start + 3601, # _check_limits elapsed check
+            ]
+            bt = BudgetTracker(max_duration_seconds=3600.0)
+            with pytest.raises(BudgetExceededError, match="Duration limit exceeded"):
+                bt.record_usage(tokens=100)
+
+    def test_no_duration_limit_no_check(self) -> None:
+        """When max_duration_seconds is None, no duration check is performed."""
+        bt = BudgetTracker()  # max_duration_seconds defaults to None
+        # Simulate a very large elapsed time by overwriting _start_time
+        bt._start_time = time.monotonic() - 999999
+        bt.record_usage(tokens=100)  # must not raise
+
+    def test_summary_includes_duration_fields(self) -> None:
+        """summary() reports duration_seconds and duration_limit."""
+        bt = BudgetTracker(max_duration_seconds=3600.0)
+        bt.record_usage(tokens=500, cost_usd=0.05)
+        s = bt.summary()
+        assert "duration_seconds" in s
+        assert "duration_limit" in s
+        assert s["duration_limit"] == 3600.0
+        assert isinstance(s["duration_seconds"], float)
+        assert s["duration_seconds"] >= 0.0
+
+    def test_summary_duration_limit_none_when_unset(self) -> None:
+        """summary() duration_limit is None when no limit was configured."""
+        bt = BudgetTracker()
+        s = bt.summary()
+        assert s["duration_limit"] is None
+        assert isinstance(s["duration_seconds"], float)
+
+    def test_reset_restarts_duration_clock(self) -> None:
+        """reset() resets the start time so elapsed resets to near zero."""
+        bt = BudgetTracker(max_duration_seconds=3600.0)
+        # Push start_time far into the past so elapsed would be huge
+        bt._start_time = time.monotonic() - 9999
+        bt.reset()
+        # After reset the clock is fresh; record_usage must not raise
+        bt.record_usage(tokens=100)

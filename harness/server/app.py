@@ -6,13 +6,19 @@ Start with:
     uvicorn harness.server.app:create_app --factory --host 0.0.0.0 --port 8765
 
 Environment variables:
-    AGENT_API_KEY   — if set, all endpoints require Authorization: Bearer <key>
-    DOMAIN_PATH     — default domain path (overridden per-request if provided)
+    AGENT_API_KEY        — if set, all endpoints require Authorization: Bearer <key>
+    AGENT_AUTH_DISABLED  — set to "true" to disable auth (dev only)
+    DOMAIN_PATH          — default domain path (overridden per-request if provided)
+    AGENT_MAX_CONCURRENT — max concurrent agent/workflow executions (default: 10)
 """
 
 from __future__ import annotations
 
+import asyncio
+import hmac
+import logging
 import os
+from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -21,20 +27,38 @@ from pydantic import BaseModel, Field
 
 from harness.server.runner import list_agents, run_agent, run_workflow
 
-# ── Auth ──────────────────────────────────────────────────────────────────
+logger = logging.getLogger(__name__)
+
+# ── Concurrency ───────────────────────────────────────────────────────────────
+
+_MAX_CONCURRENT = int(os.environ.get("AGENT_MAX_CONCURRENT", "10"))
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
 
 _bearer = HTTPBearer(auto_error=False)
-_API_KEY = os.environ.get("AGENT_API_KEY", "")
 
 
 def _check_auth(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> None:
-    if not _API_KEY:
-        return  # no key configured → open access
-    if creds is None or creds.credentials != _API_KEY:
+    # Read at call time so key rotation takes effect without restart (Fix 3)
+    api_key = os.environ.get("AGENT_API_KEY", "")
+    if not api_key:
+        # No API key configured — fail closed unless explicitly opted out
+        if os.environ.get("AGENT_AUTH_DISABLED", "").lower() == "true":
+            logger.warning("Authentication disabled via AGENT_AUTH_DISABLED. Do not use in production.")
+            return
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API key not configured. Set AGENT_API_KEY or AGENT_AUTH_DISABLED=true for dev.",
+        )
+    if creds is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing API key")
+    # Timing-safe comparison to prevent timing attacks
+    token = creds.credentials if isinstance(creds.credentials, str) else str(creds.credentials)
+    if not hmac.compare_digest(token, api_key):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing API key")
 
 
-# ── Request / Response models ─────────────────────────────────────────────
+# ── Request / Response models ─────────────────────────────────────────────────
 
 
 class RunAgentRequest(BaseModel):
@@ -62,12 +86,19 @@ class HealthResponse(BaseModel):
     version: str = "0.1.0"
 
 
-# ── App factory ───────────────────────────────────────────────────────────
+# ── App factory ───────────────────────────────────────────────────────────────
 
 
 def create_app(domain_path: str = "") -> FastAPI:
     """Create the FastAPI app, optionally pre-binding a default domain path."""
-    _default_domain = domain_path or os.environ.get("DOMAIN_PATH", ".")
+    # Fix 2: resolve CWD at creation time instead of baking in "."
+    _default_domain = domain_path or os.environ.get("DOMAIN_PATH", "")
+    if not _default_domain:
+        _default_domain = str(Path.cwd().resolve())
+        logger.warning("DOMAIN_PATH not set, using current directory: %s", _default_domain)
+
+    # Fix 1: per-app semaphore so each factory call gets its own limit
+    _semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
 
     app = FastAPI(
         title="Gentcore Agent API",
@@ -88,22 +119,36 @@ def create_app(domain_path: str = "") -> FastAPI:
     @app.post("/run/agent", tags=["run"], dependencies=[Depends(_check_auth)])
     async def run_agent_endpoint(req: RunAgentRequest) -> dict[str, Any]:
         """Run a single agent and return its output."""
-        d = req.domain or _default_domain
-        result = await run_agent(req.agent, req.task, d, dry_run=req.dry_run)
-        if result.get("status") == "error":
-            error_msg = result.get("error", "unknown error")
-            code = 404 if "not found" in error_msg.lower() else 500
-            raise HTTPException(status_code=code, detail=error_msg)
-        return result
+        try:
+            await asyncio.wait_for(_semaphore.acquire(), timeout=0.1)
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=429, detail="Too many concurrent requests")
+        try:
+            d = req.domain or _default_domain
+            result = await run_agent(req.agent, req.task, d, dry_run=req.dry_run)
+            if result.get("status") == "error":
+                error_msg = result.get("error", "unknown error")
+                code = 404 if "not found" in error_msg.lower() else 500
+                raise HTTPException(status_code=code, detail=error_msg)
+            return result
+        finally:
+            _semaphore.release()
 
     @app.post("/run/workflow", tags=["run"], dependencies=[Depends(_check_auth)])
     async def run_workflow_endpoint(req: RunWorkflowRequest) -> dict[str, Any]:
         """Run a workflow and return the execution result."""
-        d = req.domain or _default_domain
-        result = await run_workflow(req.workflow, req.task, d, dry_run=req.dry_run)
-        if result.get("status") == "error":
-            raise HTTPException(status_code=500, detail=result.get("error", "unknown error"))
-        return result
+        try:
+            await asyncio.wait_for(_semaphore.acquire(), timeout=0.1)
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=429, detail="Too many concurrent requests")
+        try:
+            d = req.domain or _default_domain
+            result = await run_workflow(req.workflow, req.task, d, dry_run=req.dry_run)
+            if result.get("status") == "error":
+                raise HTTPException(status_code=500, detail=result.get("error", "unknown error"))
+            return result
+        finally:
+            _semaphore.release()
 
     return app
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from harness.core.composition_engine import CompositionEngine, GateFailure
@@ -114,3 +116,112 @@ class TestCompositionEngine:
         engine.reset()
         assert len(engine.step_results) == 0
         assert len(engine.execution_log) == 0
+
+
+class TestEvaluateCondition:
+    """Unit tests for the fail-closed _evaluate_condition method."""
+
+    def setup_method(self) -> None:
+        self.engine = CompositionEngine()
+
+    # ── Pass-through conditions ──────────────────────────────────────────
+
+    def test_true_returns_true(self) -> None:
+        assert self.engine._evaluate_condition("true", {}) is True
+
+    def test_always_pass_returns_true(self) -> None:
+        assert self.engine._evaluate_condition("always_pass", {}) is True
+
+    def test_false_returns_false(self) -> None:
+        assert self.engine._evaluate_condition("false", {}) is False
+
+    def test_always_fail_returns_false(self) -> None:
+        assert self.engine._evaluate_condition("always_fail", {}) is False
+
+    # ── Status conditions ────────────────────────────────────────────────
+
+    def test_status_success_with_success(self) -> None:
+        assert self.engine._evaluate_condition("status == success", {"status": "success"}) is True
+
+    def test_status_success_with_completed(self) -> None:
+        assert self.engine._evaluate_condition("status == success", {"status": "completed"}) is True
+
+    def test_status_success_with_failed(self) -> None:
+        assert self.engine._evaluate_condition("status == success", {"status": "failed"}) is False
+
+    def test_status_completed_with_completed(self) -> None:
+        assert self.engine._evaluate_condition("status == completed", {"status": "completed"}) is True
+
+    def test_status_completed_with_success(self) -> None:
+        assert self.engine._evaluate_condition("status == completed", {"status": "success"}) is True
+
+    def test_status_completed_with_error(self) -> None:
+        assert self.engine._evaluate_condition("status == completed", {"status": "error"}) is False
+
+    # ── has_output condition ─────────────────────────────────────────────
+
+    def test_has_output_with_output_key(self) -> None:
+        assert self.engine._evaluate_condition("has_output", {"output": "some text"}) is True
+
+    def test_has_output_with_content_key(self) -> None:
+        assert self.engine._evaluate_condition("has_output", {"content": "some text"}) is True
+
+    def test_has_output_with_empty_output(self) -> None:
+        assert self.engine._evaluate_condition("has_output", {"output": ""}) is False
+
+    def test_has_output_with_no_output_keys(self) -> None:
+        assert self.engine._evaluate_condition("has_output", {"status": "completed"}) is False
+
+    # ── score >= N conditions ────────────────────────────────────────────
+
+    def test_score_gte_passes_above_threshold(self) -> None:
+        result = {"_validation": {"score": 0.8}}
+        assert self.engine._evaluate_condition("score >= 0.7", result) is True
+
+    def test_score_gte_passes_at_threshold(self) -> None:
+        result = {"_validation": {"score": 0.7}}
+        assert self.engine._evaluate_condition("score >= 0.7", result) is True
+
+    def test_score_gte_fails_below_threshold(self) -> None:
+        result = {"_validation": {"score": 0.5}}
+        assert self.engine._evaluate_condition("score >= 0.7", result) is False
+
+    def test_score_gte_missing_validation_defaults_zero(self) -> None:
+        # No _validation key → score defaults to 0, fails against 0.7
+        assert self.engine._evaluate_condition("score >= 0.7", {}) is False
+
+    def test_score_gte_missing_score_key_defaults_zero(self) -> None:
+        result = {"_validation": {}}
+        assert self.engine._evaluate_condition("score >= 0.5", result) is False
+
+    def test_score_gte_integer_threshold(self) -> None:
+        result = {"_validation": {"score": 1.0}}
+        assert self.engine._evaluate_condition("score >= 1", result) is True
+
+    def test_score_gte_with_whitespace_variants(self) -> None:
+        result = {"_validation": {"score": 0.9}}
+        assert self.engine._evaluate_condition("score>=0.8", result) is True
+
+    # ── Fail-closed for unknown conditions ───────────────────────────────
+
+    def test_unknown_condition_returns_false(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="harness.core.composition_engine"):
+            result = self.engine._evaluate_condition("output_contains:foo", {"output": "foo bar"})
+        assert result is False
+        assert "Unrecognized gate condition" in caplog.text
+
+    def test_empty_string_condition_returns_false(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="harness.core.composition_engine"):
+            result = self.engine._evaluate_condition("", {})
+        assert result is False
+
+    def test_arbitrary_string_condition_returns_false(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="harness.core.composition_engine"):
+            result = self.engine._evaluate_condition("result_valid", {"result": "ok"})
+        assert result is False
+        assert "Unrecognized gate condition" in caplog.text
+
+    def test_unknown_condition_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="harness.core.composition_engine"):
+            self.engine._evaluate_condition("score_check", {})
+        assert "score_check" in caplog.text

@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import re
+import time
 from collections import defaultdict
 from enum import Enum
 from typing import Any
+
+from harness.core.step_contract import StepArtifact, propagate_confidence
+from harness.core.workflow_state import InMemoryStateStore, WorkflowStateStore
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutionEvent(str, Enum):
@@ -51,12 +59,18 @@ class CompositionEngine:
     - Cross-stage feedback loops
     """
 
-    def __init__(self, agent_runner: Any = None, output_validator: Any = None) -> None:
+    def __init__(
+        self,
+        agent_runner: Any = None,
+        output_validator: Any = None,
+        state_store: WorkflowStateStore | None = None,
+    ) -> None:
         self._agent_runner = agent_runner
         self._output_validator = output_validator
         self._step_results: dict[str, dict[str, Any]] = {}
         self._execution_log: list[dict[str, Any]] = []
         self._feedback_loops: list[Any] = []
+        self._state_store: WorkflowStateStore = state_store or InMemoryStateStore()
 
     def register_feedback_loop(self, loop: Any) -> None:
         """Register a FeedbackLoop for cross-stage feedback."""
@@ -215,6 +229,20 @@ class CompositionEngine:
             # Ensure top-level status is set so gate conditions work
             if "status" not in result:
                 result["status"] = "error" if result.get("error") else "completed"
+
+            # Wrap result in typed artifact
+            artifact = StepArtifact.from_result(step_name, result, agent_id=agent_id)
+
+            # Propagate confidence from dependencies
+            dep_arts = []
+            for dep_name, dep_result in dep_artifacts.items():
+                if isinstance(dep_result, dict) and "_artifact" in dep_result:
+                    dep_arts.append(dep_result["_artifact"])
+            if dep_arts:
+                artifact.confidence = propagate_confidence(artifact, dep_arts)
+
+            result["_artifact"] = artifact
+            result["_confidence"] = artifact.confidence
             return result
         # Stub: return a placeholder result
         return {
@@ -242,12 +270,47 @@ class CompositionEngine:
           abort         — stop the workflow immediately
           escalate_human — raise for human review
           degrade/fallback — continue despite failure
+
+        Gate types:
+          standard (default) — evaluates a boolean condition string
+          router             — evaluates ordered routes, stores _routed_to in result
         """
         gate_name = gate.get("name", f"{step_name}_gate")
-        condition = gate.get("condition", "true")
         on_fail = gate.get("on_fail", "abort")
         max_retries = gate.get("max_retries", 0)
 
+        # ── ROUTER gate — dynamic routing based on output content ──
+        gate_type = gate.get("type", "standard")
+        if gate_type == "router":
+            routes = gate.get("routes", [])
+            for route in routes:
+                if route.get("default"):
+                    continue  # defer default routes to the end
+                route_condition = route.get("condition", "")
+                next_step = route.get("next_step", "")
+                if self._evaluate_route_condition(route_condition, result) and next_step:
+                    self._execution_log.append({
+                        "event": ExecutionEvent.STEP_COMPLETED,
+                        "step": step_name,
+                        "routed_to": next_step,
+                        "condition": route_condition,
+                    })
+                    result["_routed_to"] = next_step
+                    return True
+            # Check for default route
+            default_route = next(
+                (r.get("next_step") for r in routes if r.get("default")), None
+            )
+            if default_route:
+                result["_routed_to"] = default_route
+                return True
+            # No route matched and no default — fail the gate
+            logger.warning(
+                "Router gate on step %r: no route matched and no default", step_name
+            )
+            return False
+
+        condition = gate.get("condition", "true")
         passed = self._evaluate_condition(condition, result)
 
         if passed:
@@ -432,17 +495,87 @@ class CompositionEngine:
     def _evaluate_condition(self, condition: str, result: dict[str, Any]) -> bool:
         """Evaluate a gate condition against step result.
 
-        Simple evaluator: checks common patterns.
+        Recognized condition patterns (fail-closed — unknown conditions return False):
+          "true" / "always_pass"           → True
+          "false" / "always_fail"          → False
+          "status == success"              → result status is "success" or "completed"
+          "status == completed"            → result status is "success" or "completed"
+          "has_output"                     → result has non-empty output/content
+          "score >= N"                     → validation score >= N (float)
+
+        Any unrecognized condition string logs a warning and returns False.
         """
-        if condition == "true" or condition == "always_pass":
+        cond = condition.strip()
+
+        if cond in ("true", "always_pass"):
             return True
-        if condition == "false" or condition == "always_fail":
+
+        if cond in ("false", "always_fail"):
             return False
+
         status = result.get("status", "")
-        if condition == "status == success":
-            return status == "success" or status == "completed"
-        # Default: treat as passed if result has output
-        return "output" in result or "content" in result or "result" in result
+        if cond in ("status == success", "status == completed"):
+            return status in ("success", "completed")
+
+        if cond == "has_output":
+            output = result.get("output") or result.get("content") or ""
+            return bool(output)
+
+        # score >= N  (e.g. "score >= 0.7")
+        score_match = re.fullmatch(r"score\s*>=\s*([0-9]*\.?[0-9]+)", cond)
+        if score_match:
+            threshold = float(score_match.group(1))
+            actual_score = result.get("_validation", {}).get("score", 0)
+            try:
+                return float(actual_score) >= threshold
+            except (TypeError, ValueError):
+                return False
+
+        # Fail-closed: unrecognized condition
+        logger.warning(
+            "Unrecognized gate condition %r — failing closed (returning False). "
+            "Add this condition to _evaluate_condition if it is intentional.",
+            cond,
+        )
+        return False
+
+    def _evaluate_route_condition(self, condition: str, result: dict[str, Any]) -> bool:
+        """Evaluate a router condition against step result output.
+
+        Recognized patterns:
+          "output contains <keyword>"   — case-insensitive substring match on output
+          "status == <value>"           — exact match on result status
+          "confidence >= <N>"           — numeric threshold on _confidence/confidence
+          "true" / "always"             — unconditionally True
+        """
+        output = str(result.get("output") or result.get("content") or "")
+        cond = condition.strip().lower()
+
+        # "output contains <keyword>"
+        if cond.startswith("output contains "):
+            keyword = condition.strip()[len("output contains "):].strip().strip("\"'")
+            return keyword.lower() in output.lower()
+
+        # "status == <value>"
+        if cond.startswith("status == "):
+            expected = condition.strip()[len("status == "):].strip().strip("\"'")
+            return result.get("status", "") == expected
+
+        # "confidence >= <N>"
+        if cond.startswith("confidence >= "):
+            try:
+                threshold = float(condition.strip()[len("confidence >= "):])
+                actual = float(result.get("_confidence", result.get("confidence", 0)))
+                return actual >= threshold
+            except (TypeError, ValueError):
+                return False
+
+        # "true" / "always"
+        if cond in ("true", "always"):
+            return True
+
+        logger.warning("Unknown router condition: %r", condition)
+        return False
 
     @property
     def step_results(self) -> dict[str, dict[str, Any]]:
@@ -492,13 +625,26 @@ class CompositionEngine:
         self,
         steps: list[dict[str, Any]],
         step_configs: dict[str, dict[str, Any]] | None = None,
+        workflow_id: str | None = None,
     ) -> dict[str, Any]:
         """Execute workflow steps as a DAG with parallel branches.
 
         Steps within the same topological layer run concurrently.
+
+        Args:
+            steps: Step definitions with optional ``depends_on`` edges.
+            step_configs: Per-step configuration keyed by step name.
+            workflow_id: Stable identifier for this workflow run.  Used as
+                the key in the ``state_store`` so that a resumed run skips
+                already-completed steps.  Defaults to
+                ``"workflow-<epoch-ms>"`` (unique per invocation, meaning
+                no resume unless the caller supplies a stable id).
         """
         step_configs = step_configs or {}
         step_map = {s["name"]: s for s in steps}
+
+        if workflow_id is None:
+            workflow_id = f"workflow-{int(time.time() * 1000)}"
 
         try:
             layers = self.topological_sort(steps)
@@ -512,7 +658,22 @@ class CompositionEngine:
 
         for layer in layers:
             tasks = []
+            skipped: list[str] = []
+
             for step_name in layer:
+                # ── Resume: skip steps already completed in a prior run ──
+                cached = self._state_store.load_step(workflow_id, step_name)
+                if cached is not None:
+                    self._step_results[step_name] = cached
+                    self._execution_log.append({
+                        "event": ExecutionEvent.STATE_RESTORED,
+                        "step": step_name,
+                        "workflow_id": workflow_id,
+                    })
+                    logger.info("Resuming: skipping completed step %r", step_name)
+                    skipped.append(step_name)
+                    continue
+
                 step = step_map[step_name]
                 agent_id = step.get("agent", "")
                 config = step_configs.get(step_name, {})
@@ -526,11 +687,22 @@ class CompositionEngine:
                     "layer": layers.index(layer),
                 })
 
-                tasks.append(self._run_dag_step(step_name, step, config, dep_artifacts, step_configs, step_map))
+                tasks.append(
+                    self._run_dag_step(
+                        step_name, step, config, dep_artifacts,
+                        step_configs, step_map, workflow_id,
+                    )
+                )
+
+            if not tasks:
+                # All steps in this layer were resumed from cache
+                continue
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            for step_name, result in zip(layer, results):
+            # Map results back to the non-skipped step names in order
+            non_skipped = [n for n in layer if n not in skipped]
+            for step_name, result in zip(non_skipped, results):
                 if isinstance(result, Exception):
                     self._execution_log.append({
                         "event": ExecutionEvent.STEP_FAILED,
@@ -559,16 +731,23 @@ class CompositionEngine:
         dep_artifacts: dict[str, Any],
         step_configs: dict[str, dict[str, Any]] | None = None,
         step_map: dict[str, dict[str, Any]] | None = None,
+        workflow_id: str | None = None,
     ) -> dict[str, Any]:
         """Execute a single DAG step and store its result.
 
         dep_artifacts are injected into context automatically by _execute_step.
+        On success the result is persisted via the state_store so that a
+        resumed run can skip this step.
         """
         step_configs = step_configs or {}
         step_map = step_map or {}
         agent_id = step.get("agent", "")
         result = await self._execute_step(step_name, agent_id, config, dep_artifacts)
         self._step_results[step_name] = result
+
+        # Persist the completed result for durable resume
+        if workflow_id is not None:
+            self._state_store.save_step(workflow_id, step_name, result)
 
         # Check cross-stage feedback loops — re-execute target step if triggered
         feedback = self._check_feedback_loops(step_name, result)

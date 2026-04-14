@@ -50,27 +50,20 @@ class AgentRunner:
         mode_dispatcher: ModeDispatcher | None = None,
         tool_executor: ToolExecutor | None = None,
         grading_engine: Any | None = None,
+        memory_store: Any | None = None,
     ) -> None:
         self.provider = provider
         self.prompt_assembler = prompt_assembler or PromptAssembler()
         self.mode_dispatcher = mode_dispatcher or ModeDispatcher()
         self.tool_executor = tool_executor
         self.grading_engine = grading_engine
-        self._state_log: list[dict[str, Any]] = []
-
-    def _set_state(self, state: AgentState, agent_id: str = "", detail: str = "") -> None:
-        """Record a state transition."""
-        self._state_log.append({
-            "state": state.value,
-            "agent_id": agent_id,
-            "detail": detail,
-            "timestamp": time.time(),
-        })
+        self.memory_store = memory_store
+        self._last_state_log: list[dict[str, Any]] = []
 
     @property
     def state_log(self) -> list[dict[str, Any]]:
         """Return the state transition log for the last run."""
-        return list(self._state_log)
+        return list(self._last_state_log)
 
     @staticmethod
     def _get(obj: Any, key: str, default: Any = None) -> Any:
@@ -102,9 +95,21 @@ class AgentRunner:
             Dict with 'result', 'run_record', 'budget_summary' keys.
         """
         task = task or {}
-        self._state_log.clear()
+        state_log: list[dict[str, Any]] = []
+
+        def _set_state(state: AgentState, agent_id: str = "", detail: str = "") -> None:
+            state_log.append({
+                "state": state.value,
+                "agent_id": agent_id,
+                "detail": detail,
+                "timestamp": time.time(),
+            })
+
+        # Extract hooks stored by ManifestLoader (private key, safe for dict manifests only)
+        hooks = self._get(manifest, "_hooks", {}) if isinstance(manifest, dict) else {}
+
         agent_id = self._get(manifest, "id", "unknown")
-        self._set_state(AgentState.SPAWNING, agent_id)
+        _set_state(AgentState.SPAWNING, agent_id)
         start_time = time.monotonic()
         task_id = self._get(task, "task_id", "unknown")
         trace_id = f"trace-{task_id}-{int(time.time())}"
@@ -131,6 +136,19 @@ class AgentRunner:
                 for tb in tool_bindings
             ]
 
+        # Call pre_execute hook if present — may modify context_items
+        if "pre_execute" in hooks:
+            context_items = hooks["pre_execute"](manifest, task, context_items or [])
+
+        # Inject past agent memories as context (optional — no-op when memory_store is None)
+        if self.memory_store:
+            memories = self.memory_store.recall(agent_id, key="run_output", k=3)
+            if memories:
+                memory_text = "\n".join(f"- {m['value'][:500]}" for m in memories)
+                context_items = list(context_items or []) + [
+                    {"source": "agent_memory", "content": f"Past outputs from this agent:\n{memory_text}"}
+                ]
+
         # Assemble prompt
         messages = self.prompt_assembler.assemble(
             manifest=manifest,
@@ -147,11 +165,11 @@ class AgentRunner:
         if execution_mode is None and manifest_em:
             execution_mode = manifest_em.model_dump() if hasattr(manifest_em, "model_dump") else manifest_em
         strategy = self.mode_dispatcher.dispatch(execution_mode)
-        self._set_state(AgentState.READY, agent_id)
+        _set_state(AgentState.READY, agent_id)
 
         # Execute
         try:
-            self._set_state(AgentState.RUNNING, agent_id)
+            _set_state(AgentState.RUNNING, agent_id)
             execute_kwargs: dict[str, Any] = {}
             if output_schema:
                 execute_kwargs["output_schema"] = output_schema
@@ -181,7 +199,22 @@ class AgentRunner:
                     parse_log["success"] = False
             result["output_parse_log"] = parse_log
 
-            self._set_state(AgentState.VALIDATING, agent_id)
+            # Call post_execute hook if present — may transform result
+            if "post_execute" in hooks:
+                result = hooks["post_execute"](manifest, task, result)
+
+            _set_state(AgentState.VALIDATING, agent_id)
+
+            # Persist result summary to long-term memory (optional)
+            if self.memory_store and isinstance(result, dict):
+                output = result.get("content") or result.get("output") or ""
+                if output and len(str(output)) > 10:
+                    self.memory_store.store(
+                        agent_id=agent_id,
+                        key="run_output",
+                        value=str(output)[:2000],
+                        metadata={"task_id": task_id, "status": "completed"},
+                    )
 
             duration_ms = int((time.monotonic() - start_time) * 1000)
 
@@ -201,31 +234,34 @@ class AgentRunner:
             # Surface provider/API errors that were caught and stored in result
             result_error = result.get("error") if isinstance(result, dict) else None
             if result_error:
-                self._set_state(AgentState.FAILED, agent_id, result_error)
+                _set_state(AgentState.FAILED, agent_id, result_error)
+                self._last_state_log = state_log
                 return {
                     "result": result,
                     "run_record": run_record,
                     "budget_summary": budget.summary(),
-                    "state_log": list(self._state_log),
+                    "state_log": list(state_log),
                     "status": "error",
                     "error": result_error,
                     "output": "",
                     "content": "",
                 }
 
-            self._set_state(AgentState.COMPLETED, agent_id)
+            _set_state(AgentState.COMPLETED, agent_id)
+            self._last_state_log = state_log
             return {
                 "result": result,
                 "run_record": run_record,
                 "budget_summary": budget.summary(),
-                "state_log": list(self._state_log),
+                "state_log": list(state_log),
                 "status": "completed",
                 "output": result.get("content", "") if isinstance(result, dict) else str(result),
                 "content": result.get("content", "") if isinstance(result, dict) else str(result),
             }
 
         except BudgetExceededError as exc:
-            self._set_state(AgentState.FAILED, agent_id, str(exc))
+            _set_state(AgentState.FAILED, agent_id, str(exc))
+            self._last_state_log = state_log
             duration_ms = int((time.monotonic() - start_time) * 1000)
             run_record = RunRecord(
                 trace_id=trace_id,
@@ -251,7 +287,8 @@ class AgentRunner:
             }
 
         except Exception as exc:
-            self._set_state(AgentState.FAILED, agent_id, str(exc))
+            _set_state(AgentState.FAILED, agent_id, str(exc))
+            self._last_state_log = state_log
             duration_ms = int((time.monotonic() - start_time) * 1000)
             run_record = RunRecord(
                 trace_id=trace_id,
