@@ -23,20 +23,43 @@ class BedrockProvider(BaseProvider):
         region: str = "us-east-1",
         model_id: str = "anthropic.claude-3-sonnet-20240229-v1:0",
         max_tokens: int = 4096,
+        bearer_token: str = "",
     ) -> None:
         self._region = region
         self._model_id = model_id
         self._max_tokens = max_tokens
+        self._bearer_token = bearer_token
         self._client: Any = None
 
     def _get_client(self) -> Any:
-        """Lazy-initialize the Bedrock Runtime client."""
+        """Lazy-initialize the Bedrock Runtime client.
+
+        Auth priority:
+        1. Bearer token (AWS_BEARER_TOKEN_BEDROCK) — long-term API key for dev
+        2. Standard AWS credentials (IAM role, env vars, profile) — for production
+        """
         if self._client is None:
             try:
                 import boto3
-                self._client = boto3.client(
-                    "bedrock-runtime", region_name=self._region
-                )
+                import os
+
+                token = self._bearer_token or os.environ.get("AWS_BEARER_TOKEN_BEDROCK", "")
+                if token:
+                    # Use bearer token auth (Bedrock long-term API key)
+                    from botocore.config import Config
+                    self._client = boto3.client(
+                        "bedrock-runtime",
+                        region_name=self._region,
+                        config=Config(signature_version="bearer"),
+                        aws_access_key_id="",
+                        aws_secret_access_key="",
+                        aws_session_token=token,
+                    )
+                else:
+                    # Standard IAM auth (env vars, profile, role)
+                    self._client = boto3.client(
+                        "bedrock-runtime", region_name=self._region
+                    )
             except ImportError as exc:
                 raise ImportError(
                     "boto3 package not installed. Install with: pip install boto3"

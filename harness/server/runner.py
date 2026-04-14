@@ -34,6 +34,11 @@ _ALLOWED_ENV_VARS = {
     "OPENAI_API_KEY",
     "BEDROCK_API_KEY",
     "AZURE_OPENAI_API_KEY",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_DEFAULT_REGION",
+    "AWS_BEARER_TOKEN_BEDROCK",
 }
 
 
@@ -103,6 +108,12 @@ def _make_provider(domain_path: str, dry_run: bool = False) -> Any:
             )
         api_key = os.environ.get(api_key_env, "")
         return OpenAIProvider(api_key=api_key, model=model)
+
+    if provider_name == "bedrock":
+        from harness.providers.bedrock_provider import BedrockProvider
+
+        region = cfg.get("region", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
+        return BedrockProvider(region=region, model_id=model, max_tokens=max_tokens)
 
     # Unknown provider: fail explicitly instead of silent fallback
     raise ValueError(f"Unknown provider: {provider_name}")

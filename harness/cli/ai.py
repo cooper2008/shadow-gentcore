@@ -349,6 +349,22 @@ def _make_provider(dry_run: bool, provider_config_path: str | None = None, provi
         click.echo("Error: claude CLI not found in PATH.", err=True)
         raise SystemExit(1)
 
+    if provider_override == "bedrock":
+        from harness.providers.bedrock_provider import BedrockProvider
+        region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+        model = os.environ.get("BEDROCK_MODEL", "anthropic.claude-3-sonnet-20240229-v1:0")
+        click.echo(f"  provider: AWS Bedrock ({model}, {region})")
+        return BedrockProvider(region=region, model_id=model)
+
+    if provider_override == "anthropic":
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            click.echo("Error: ANTHROPIC_API_KEY not set.", err=True)
+            raise SystemExit(1)
+        from harness.providers.anthropic_provider import AnthropicProvider
+        click.echo("  provider: Anthropic API (--provider override)")
+        return AnthropicProvider(api_key=api_key)
+
     # Read domain-level provider config (model selection, not credentials)
     provider_cfg: dict[str, Any] = {}
     if provider_config_path:
@@ -377,8 +393,9 @@ def _make_provider(dry_run: bool, provider_config_path: str | None = None, provi
             return OpenAIProvider(api_key=api_key, model=model, max_tokens=max_tokens)
     elif provider_name == "bedrock":
         from harness.providers.bedrock_provider import BedrockProvider
-        click.echo(f"  provider: AWS Bedrock ({model})")
-        return BedrockProvider(model=model)
+        region = provider_cfg.get("region", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
+        click.echo(f"  provider: AWS Bedrock ({model}, {region})")
+        return BedrockProvider(region=region, model_id=model, max_tokens=max_tokens)
 
     # Fallback: try ANTHROPIC_API_KEY directly
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")

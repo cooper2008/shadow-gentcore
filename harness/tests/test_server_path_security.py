@@ -99,7 +99,7 @@ class TestMakeProviderEnvAllowlist:
 
         self._write_provider_yaml(tmp_path, """\
             provider: anthropic
-            api_key_env: AWS_SECRET_ACCESS_KEY
+            api_key_env: GITHUB_TOKEN
         """)
         with pytest.raises(ValueError, match="Disallowed api_key_env"):
             _make_provider(str(tmp_path), dry_run=False)
