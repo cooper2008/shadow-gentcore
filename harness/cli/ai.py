@@ -150,20 +150,133 @@ def workflow_create(domain_name: str, name: str) -> None:
 # ── validate / certify / publish ──────────────────────────────────────────
 
 
-@cli.command()
-@click.argument("path")
-def validate(path: str) -> None:
-    """Validate manifests at the given path."""
-    from harness.authoring.validator import Validator
+def _print_issues(label: str, issues: list[str]) -> None:
+    """Print validation result for a single target, return True when valid."""
+    if issues:
+        click.echo(f"  \u2717 {label} \u2014 {len(issues)} issue{'s' if len(issues) != 1 else ''}:")
+        for msg in issues:
+            click.echo(f"    - {msg}")
+    else:
+        click.echo(f"  \u2713 {label} \u2014 valid")
 
-    v = Validator()
-    result = v.validate_domain(Path(path))
-    click.echo(result.summary)
-    for e in result.errors:
-        click.echo(f"  ERROR: [{e['rule']}] {e['message']}")
-    for w in result.warnings:
-        click.echo(f"  WARN:  [{w['rule']}] {w['message']}")
-    if not result.is_valid:
+
+@cli.command()
+@click.argument("path", default="")
+@click.option("--agent", "agent_dir", default=None, help="Validate a single agent directory")
+@click.option("--workflow", "workflow_file", default=None, help="Validate a single workflow YAML")
+@click.option("--domain", "domain_path", default=None, help="Validate all agents + workflows under a domain")
+def validate(path: str, agent_dir: str | None, workflow_file: str | None, domain_path: str | None) -> None:
+    """Validate agent manifests and workflow YAMLs without running them.
+
+    \b
+    Auto-detect mode (positional PATH):
+        ai validate agents/MyAgent/v1          # agent directory
+        ai validate workflows/build.yaml       # workflow YAML
+
+    \b
+    Explicit modes:
+        ai validate --agent agents/MyAgent/v1
+        ai validate --workflow workflows/build.yaml
+        ai validate --domain examples/backend_fastapi
+
+    \b
+    Legacy domain validation (domain manifest + authoring rules):
+        ai validate <domain_path>              # falls back to Validator when no agents/ subdir found
+    """
+    from harness.core.schema_validator import validate_agent, validate_workflow
+
+    all_issues: dict[str, list[str]] = {}
+
+    # ── explicit flags take priority ─────────────────────────────────────
+    if agent_dir:
+        issues = validate_agent(agent_dir)
+        all_issues[agent_dir] = issues
+
+    if workflow_file:
+        issues = validate_workflow(workflow_file)
+        all_issues[workflow_file] = issues
+
+    if domain_path:
+        dp = Path(domain_path)
+        agents_root = dp / "agents"
+        workflows_root = dp / "workflows"
+
+        if agents_root.is_dir():
+            for manifest in sorted(agents_root.rglob("agent_manifest.yaml")):
+                bundle = str(manifest.parent)
+                all_issues[bundle] = validate_agent(manifest.parent)
+
+        if workflows_root.is_dir():
+            for wf in sorted(workflows_root.rglob("*.yaml")):
+                all_issues[str(wf)] = validate_workflow(wf)
+
+        if not agents_root.is_dir() and not workflows_root.is_dir():
+            # Nothing to schema-validate; fall through to legacy domain validator
+            pass
+
+    # ── positional PATH (auto-detect) ────────────────────────────────────
+    if not agent_dir and not workflow_file and not domain_path:
+        if not path:
+            click.echo("Error: provide a PATH or use --agent/--workflow/--domain.", err=True)
+            raise SystemExit(1)
+
+        target = Path(path)
+
+        if target.is_dir():
+            # Check whether it looks like an agent bundle
+            if (target / "agent_manifest.yaml").exists():
+                all_issues[path] = validate_agent(target)
+            else:
+                # Could be a domain — try walking agents/ and workflows/
+                agents_root = target / "agents"
+                workflows_root = target / "workflows"
+
+                if agents_root.is_dir():
+                    for manifest in sorted(agents_root.rglob("agent_manifest.yaml")):
+                        bundle = str(manifest.parent)
+                        all_issues[bundle] = validate_agent(manifest.parent)
+
+                if workflows_root.is_dir():
+                    for wf in sorted(workflows_root.rglob("*.yaml")):
+                        all_issues[str(wf)] = validate_workflow(wf)
+
+                if not all_issues:
+                    # Legacy domain validation via authoring.Validator
+                    from harness.authoring.validator import Validator
+                    v = Validator()
+                    result = v.validate_domain(target)
+                    click.echo(result.summary)
+                    for e in result.errors:
+                        click.echo(f"  ERROR: [{e['rule']}] {e['message']}")
+                    for w in result.warnings:
+                        click.echo(f"  WARN:  [{w['rule']}] {w['message']}")
+                    if not result.is_valid:
+                        raise SystemExit(1)
+                    return
+
+        elif target.suffix in {".yaml", ".yml"}:
+            all_issues[path] = validate_workflow(target)
+        else:
+            click.echo(f"Error: cannot determine type for path: {path}", err=True)
+            raise SystemExit(1)
+
+    # ── print results ────────────────────────────────────────────────────
+    if not all_issues:
+        click.echo("Nothing to validate.")
+        return
+
+    failed = 0
+    for label, issues in all_issues.items():
+        _print_issues(label, issues)
+        if issues:
+            failed += 1
+
+    total = len(all_issues)
+    passed = total - failed
+    click.echo()
+    click.echo(f"Validated {total} target{'s' if total != 1 else ''}: {passed} passed, {failed} failed")
+
+    if failed:
         raise SystemExit(1)
 
 
@@ -979,6 +1092,18 @@ def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, d
     click.echo(f"  total files: {len(generated_files)}")
 
     if result["status"] == "completed":
+        # Post-genesis verification — smoke-test generated output before declaring success
+        from harness.core.genesis_verifier import verify_genesis_output
+
+        verification = verify_genesis_output(output_dir)
+        if verification["passed"]:
+            click.echo(f"  verification: passed ({verification['total_checks']} checks)")
+        else:
+            click.echo(f"  verification: FAILED ({verification['failure_count']} issues)")
+            for f in verification["failures"]:
+                click.echo(f"    - {f}")
+        click.echo()
+
         click.echo("Genesis build complete. Next steps:")
         click.echo(f"  ./ai validate {output_dir}")
         click.echo(f"  ./ai run workflow {output_dir}/workflows/<name>.yaml --dry-run")

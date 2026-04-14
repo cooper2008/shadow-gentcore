@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import textwrap
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 
+from harness.core.agent_runner import _call_hook_safe, _HOOK_TIMEOUT
 from harness.core.manifest_loader import ManifestLoader
 
 
@@ -220,3 +222,108 @@ class TestAgentRunnerHooks:
             )
 
         assert out["status"] == "completed"
+
+
+# ---------------------------------------------------------------------------
+# Hook sandboxing tests (_call_hook_safe)
+# ---------------------------------------------------------------------------
+
+class TestCallHookSafe:
+    """Verify _call_hook_safe enforces timeout and exception safety."""
+
+    def test_hook_timeout_returns_fallback(self) -> None:
+        """A hook that sleeps longer than _HOOK_TIMEOUT returns the last arg."""
+        import harness.core.agent_runner as runner_mod
+
+        original_timeout = runner_mod._HOOK_TIMEOUT
+        runner_mod._HOOK_TIMEOUT = 1  # reduce for fast test
+
+        def slow_hook(manifest, task, ctx):
+            time.sleep(3)  # must exceed _HOOK_TIMEOUT (1s) but finish quickly
+            return ["should never reach"]
+
+        try:
+            fallback_ctx = [{"source": "original", "content": "keep me"}]
+            result = _call_hook_safe(slow_hook, {}, {}, fallback_ctx)
+            assert result is fallback_ctx, "Timed-out hook must return last arg (fallback)"
+        finally:
+            runner_mod._HOOK_TIMEOUT = original_timeout
+
+    def test_hook_exception_returns_fallback(self) -> None:
+        """A hook that raises returns the last arg instead of propagating."""
+        def bad_hook(manifest, task, ctx):
+            raise RuntimeError("hook exploded")
+
+        fallback_ctx = [{"source": "original", "content": "safe"}]
+        result = _call_hook_safe(bad_hook, {}, {}, fallback_ctx)
+        assert result is fallback_ctx
+
+    def test_hook_success_returns_result(self) -> None:
+        """A well-behaved hook returns its own value."""
+        def good_hook(manifest, task, ctx):
+            return ctx + [{"source": "hook", "content": "added"}]
+
+        original = [{"source": "base", "content": "base"}]
+        result = _call_hook_safe(good_hook, {}, {}, original)
+        assert len(result) == 2
+        assert result[1]["source"] == "hook"
+
+    @pytest.mark.asyncio
+    async def test_runner_pre_hook_timeout_preserves_context(self) -> None:
+        """AgentRunner.run() with a slow pre_execute still completes."""
+        import harness.core.agent_runner as runner_mod
+
+        original_timeout = runner_mod._HOOK_TIMEOUT
+        runner_mod._HOOK_TIMEOUT = 1
+
+        def slow_pre(manifest, task, ctx):
+            time.sleep(3)  # must exceed _HOOK_TIMEOUT (1s) but finish quickly
+            return []
+
+        try:
+            manifest = {
+                "id": "timeout_agent", "version": "1.0.0",
+                "_hooks": {"pre_execute": slow_pre},
+            }
+            from harness.core.agent_runner import AgentRunner
+            runner = AgentRunner(provider=MagicMock())
+            strategy = MagicMock()
+            strategy.execute = AsyncMock(
+                return_value={"content": "ok", "tokens_used": 5},
+            )
+            with patch.object(runner.mode_dispatcher, "dispatch", return_value=strategy):
+                out = await runner.run(
+                    manifest=manifest,
+                    task={"task_id": "t_timeout"},
+                    system_prompt_content="test",
+                    context_items=[{"source": "base", "content": "kept"}],
+                )
+            assert out["status"] == "completed"
+        finally:
+            runner_mod._HOOK_TIMEOUT = original_timeout
+
+    @pytest.mark.asyncio
+    async def test_runner_post_hook_exception_preserves_result(self) -> None:
+        """AgentRunner.run() with a crashing post_execute still returns the original result."""
+        def crashing_post(manifest, task, result):
+            raise ValueError("post hook crash")
+
+        manifest = {
+            "id": "crash_agent", "version": "1.0.0",
+            "_hooks": {"post_execute": crashing_post},
+        }
+        from harness.core.agent_runner import AgentRunner
+        runner = AgentRunner(provider=MagicMock())
+        strategy = MagicMock()
+        strategy.execute = AsyncMock(
+            return_value={"content": "original output", "tokens_used": 5},
+        )
+        with patch.object(runner.mode_dispatcher, "dispatch", return_value=strategy):
+            out = await runner.run(
+                manifest=manifest,
+                task={"task_id": "t_crash"},
+                system_prompt_content="test",
+            )
+        assert out["status"] == "completed"
+        # The result should be the original (fallback), not whatever the hook tried to return
+        assert out["result"]["content"] == "original output"

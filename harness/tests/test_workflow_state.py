@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -140,6 +142,87 @@ class TestFileStateStore:
     def test_satisfies_protocol(self, tmp_path: Any) -> None:
         store = FileStateStore(base_dir=tmp_path)
         assert isinstance(store, WorkflowStateStore)
+
+    def test_no_tmp_file_left_after_successful_write(self, tmp_path: Any) -> None:
+        """The .tmp side-file must not exist once save_step returns."""
+        store = FileStateStore(base_dir=tmp_path)
+        store.save_step("wf1", "step_a", {"ok": True})
+        step_dir = tmp_path / "wf1"
+        # Match both legacy "*.tmp" and per-thread "*.tmp*" patterns
+        tmp_files = list(step_dir.glob("*.tmp*"))
+        assert tmp_files == [], f"Unexpected .tmp files left behind: {tmp_files}"
+
+    def test_concurrent_writes_dont_corrupt(self, tmp_path: Any) -> None:
+        """Multiple threads writing the same step concurrently must leave a valid JSON file."""
+        store = FileStateStore(base_dir=tmp_path)
+        errors: list[Exception] = []
+        n_threads = 20
+
+        def writer(i: int) -> None:
+            try:
+                store.save_step("wf-concurrent", "shared_step", {"writer": i, "payload": "x" * 512})
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=writer, args=(i,)) for i in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == [], f"Threads raised exceptions: {errors}"
+        # File must be loadable and contain a valid result
+        result = store.load_step("wf-concurrent", "shared_step")
+        assert result is not None
+        assert "writer" in result
+
+    def test_concurrent_writes_no_stale_tmp_files(self, tmp_path: Any) -> None:
+        """After concurrent writes finish, no .tmp files should remain."""
+        store = FileStateStore(base_dir=tmp_path)
+        n_threads = 15
+
+        def writer(i: int) -> None:
+            store.save_step("wf-tmp-check", f"step_{i}", {"i": i})
+
+        threads = [threading.Thread(target=writer, args=(i,)) for i in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        step_dir = tmp_path / "wf-tmp-check"
+        tmp_files = list(step_dir.glob("*.tmp*"))
+        assert tmp_files == [], f"Stale .tmp files found: {tmp_files}"
+
+    def test_clear_with_concurrent_write_doesnt_raise(self, tmp_path: Any) -> None:
+        """clear() racing with save_step() must not raise an unhandled exception."""
+        store = FileStateStore(base_dir=tmp_path)
+        # Pre-populate so clear has something to do
+        for i in range(5):
+            store.save_step("wf-race", f"step_{i}", {"i": i})
+
+        errors: list[Exception] = []
+
+        def do_clear() -> None:
+            try:
+                store.clear("wf-race")
+            except Exception as exc:
+                errors.append(exc)
+
+        def do_write(i: int) -> None:
+            try:
+                store.save_step("wf-race", f"step_{i}", {"i": i})
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=do_clear)]
+        threads += [threading.Thread(target=do_write, args=(i,)) for i in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == [], f"Race between clear and write raised: {errors}"
 
 
 # ---------------------------------------------------------------------------

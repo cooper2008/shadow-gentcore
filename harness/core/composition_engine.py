@@ -47,6 +47,23 @@ class HumanEscalation(Exception):
     """Raised when a gate escalates to a human reviewer."""
 
 
+class HumanApprovalRequired(Exception):
+    """Raised when a workflow step requires human approval to continue.
+
+    The workflow is paused — not failed.  The caller should persist this
+    state and resume when ``/workflows/{workflow_id}/approve/{step_name}``
+    is called.
+    """
+
+    def __init__(self, workflow_id: str, step_name: str, message: str = "") -> None:
+        self.workflow_id = workflow_id
+        self.step_name = step_name
+        self.message = message
+        super().__init__(
+            f"Approval required for {workflow_id}/{step_name}: {message}"
+        )
+
+
 class CompositionEngine:
     """Executes a workflow by running steps in sequence.
 
@@ -120,7 +137,7 @@ class CompositionEngine:
 
                 # Check gate
                 if gate:
-                    gate_passed = await self._check_gate(step_name, result, gate, config, step)
+                    gate_passed = await self._check_gate(step_name, result, gate, config, step, workflow_id=None)
                     if not gate_passed:
                         return {
                             "step_results": dict(self._step_results),
@@ -260,6 +277,7 @@ class CompositionEngine:
         gate: dict[str, Any],
         config: dict[str, Any],
         step: dict[str, Any] | None = None,
+        workflow_id: str | None = None,
     ) -> bool:
         """Check a gate condition after step execution.
 
@@ -309,6 +327,46 @@ class CompositionEngine:
                 "Router gate on step %r: no route matched and no default", step_name
             )
             return False
+
+        # ── APPROVAL gate — pause workflow for human review ──────────────────
+        if gate_type == "approval":
+            approval_key = f"_approval_{step_name}"
+            existing = self._state_store.load_step(workflow_id or "", approval_key)
+
+            if existing is not None and existing.get("status") == "approved":
+                # Human has already approved — pass the gate
+                self._execution_log.append({
+                    "event": ExecutionEvent.GATE_PASSED,
+                    "gate": gate_name,
+                    "step": step_name,
+                    "approval": "approved",
+                })
+                return True
+
+            if existing is None:
+                # First encounter — create and persist the approval request
+                approval: dict[str, Any] = {
+                    "workflow_id": workflow_id or "",
+                    "step_name": step_name,
+                    "status": "pending",
+                    "message": gate.get("message", "Human approval required"),
+                    "result_preview": str(result.get("output", ""))[:500],
+                    "created_at": time.time(),
+                    "timeout_seconds": gate.get("timeout_seconds", 86400),
+                }
+                self._state_store.save_step(
+                    workflow_id or "", approval_key, approval
+                )
+
+            # Raise so the caller knows the workflow is paused, not failed
+            approval_data = existing or self._state_store.load_step(
+                workflow_id or "", approval_key
+            ) or {}
+            raise HumanApprovalRequired(
+                workflow_id=workflow_id or "",
+                step_name=step_name,
+                message=approval_data.get("message", "Human approval required"),
+            )
 
         condition = gate.get("condition", "true")
         passed = self._evaluate_condition(condition, result)
@@ -704,6 +762,10 @@ class CompositionEngine:
             non_skipped = [n for n in layer if n not in skipped]
             for step_name, result in zip(non_skipped, results):
                 if isinstance(result, Exception):
+                    # Approval gates pause the workflow — propagate as-is so
+                    # the caller (server endpoint / CLI) can return 202.
+                    if isinstance(result, HumanApprovalRequired):
+                        raise result
                     self._execution_log.append({
                         "event": ExecutionEvent.STEP_FAILED,
                         "step": step_name,
@@ -760,7 +822,7 @@ class CompositionEngine:
 
         gate = step.get("gate")
         if gate:
-            gate_passed = await self._check_gate(step_name, result, gate, config, step)
+            gate_passed = await self._check_gate(step_name, result, gate, config, step, workflow_id=workflow_id)
             if not gate_passed:
                 raise GateFailure(f"Gate failed for {step_name}")
 

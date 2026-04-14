@@ -18,13 +18,16 @@ import asyncio
 import hmac
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
+from harness.core.composition_engine import HumanApprovalRequired
 from harness.server.runner import list_agents, run_agent, run_workflow
 
 logger = logging.getLogger(__name__)
@@ -32,6 +35,7 @@ logger = logging.getLogger(__name__)
 # ── Concurrency ───────────────────────────────────────────────────────────────
 
 _MAX_CONCURRENT = int(os.environ.get("AGENT_MAX_CONCURRENT", "10"))
+_REQUEST_TIMEOUT = int(os.environ.get("AGENT_REQUEST_TIMEOUT", "300"))  # 5 min default
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -125,7 +129,13 @@ def create_app(domain_path: str = "") -> FastAPI:
             raise HTTPException(status_code=429, detail="Too many concurrent requests")
         try:
             d = req.domain or _default_domain
-            result = await run_agent(req.agent, req.task, d, dry_run=req.dry_run)
+            try:
+                result = await asyncio.wait_for(
+                    run_agent(req.agent, req.task, d, dry_run=req.dry_run),
+                    timeout=_REQUEST_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                raise HTTPException(status_code=504, detail="Request timed out")
             if result.get("status") == "error":
                 error_msg = result.get("error", "unknown error")
                 code = 404 if "not found" in error_msg.lower() else 500
@@ -143,12 +153,61 @@ def create_app(domain_path: str = "") -> FastAPI:
             raise HTTPException(status_code=429, detail="Too many concurrent requests")
         try:
             d = req.domain or _default_domain
-            result = await run_workflow(req.workflow, req.task, d, dry_run=req.dry_run)
+            try:
+                result = await asyncio.wait_for(
+                    run_workflow(req.workflow, req.task, d, dry_run=req.dry_run),
+                    timeout=_REQUEST_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                raise HTTPException(status_code=504, detail="Request timed out")
+            except HumanApprovalRequired as e:
+                return JSONResponse(
+                    status_code=202,
+                    content={
+                        "status": "awaiting_approval",
+                        "workflow_id": e.workflow_id,
+                        "step_name": e.step_name,
+                        "message": e.message,
+                        "approve_url": f"/workflows/{e.workflow_id}/approve/{e.step_name}",
+                    },
+                )
             if result.get("status") == "error":
                 raise HTTPException(status_code=500, detail=result.get("error", "unknown error"))
             return result
         finally:
             _semaphore.release()
+
+    @app.get("/workflows/{workflow_id}/approvals", tags=["approvals"], dependencies=[Depends(_check_auth)])
+    async def list_approvals(workflow_id: str, domain: str = "") -> list[dict[str, Any]]:
+        """List pending approvals for a workflow."""
+        from harness.core.workflow_state import FileStateStore
+        d = domain or _default_domain
+        store = FileStateStore(Path(d) / ".gentcore" / "state")
+        completed = store.list_completed(workflow_id)
+        approvals = []
+        for step in completed:
+            if step.startswith("_approval_"):
+                data = store.load_step(workflow_id, step)
+                if data and data.get("status") == "pending":
+                    approvals.append(data)
+        return approvals
+
+    @app.post("/workflows/{workflow_id}/approve/{step_name}", tags=["approvals"], dependencies=[Depends(_check_auth)])
+    async def approve_step(workflow_id: str, step_name: str, domain: str = "") -> dict[str, Any]:
+        """Approve a pending step, allowing the workflow to resume."""
+        from harness.core.workflow_state import FileStateStore
+        d = domain or _default_domain
+        store = FileStateStore(Path(d) / ".gentcore" / "state")
+        approval_key = f"_approval_{step_name}"
+        data = store.load_step(workflow_id, approval_key)
+        if not data:
+            raise HTTPException(status_code=404, detail=f"No pending approval for {step_name}")
+        if data.get("status") != "pending":
+            raise HTTPException(status_code=409, detail=f"Approval already {data.get('status')}")
+        data["status"] = "approved"
+        data["approved_at"] = time.time()
+        store.save_step(workflow_id, approval_key, data)
+        return {"status": "approved", "workflow_id": workflow_id, "step_name": step_name}
 
     return app
 

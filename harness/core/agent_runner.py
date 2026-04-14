@@ -2,9 +2,39 @@
 
 from __future__ import annotations
 
+import concurrent.futures
+import logging
 import time
 from enum import Enum
 from typing import Any
+
+_HOOK_TIMEOUT = 5  # seconds
+
+_hook_logger = logging.getLogger(__name__)
+
+
+def _call_hook_safe(hook_fn: Any, *args: Any) -> Any:
+    """Call a hook function with timeout and exception safety.
+
+    Ensures: (1) hooks cannot hang the agent beyond _HOOK_TIMEOUT seconds,
+    (2) hook exceptions do not crash the agent runner, (3) on failure the
+    last positional arg (the unmodified input) is returned as a safe fallback.
+    """
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(hook_fn, *args)
+            try:
+                return future.result(timeout=_HOOK_TIMEOUT)
+            except concurrent.futures.TimeoutError:
+                _hook_logger.error(
+                    "Hook %s timed out after %ds", hook_fn.__name__, _HOOK_TIMEOUT,
+                )
+                return args[-1]  # Return the last arg (usually the unmodified input)
+    except Exception as exc:
+        _hook_logger.error(
+            "Hook %s raised %s: %s", hook_fn.__name__, type(exc).__name__, exc,
+        )
+        return args[-1]  # Return unmodified input on error
 
 from agent_contracts.manifests.agent_manifest import AgentManifest
 from agent_contracts.contracts.task_envelope import TaskEnvelope
@@ -138,7 +168,7 @@ class AgentRunner:
 
         # Call pre_execute hook if present — may modify context_items
         if "pre_execute" in hooks:
-            context_items = hooks["pre_execute"](manifest, task, context_items or [])
+            context_items = _call_hook_safe(hooks["pre_execute"], manifest, task, context_items or [])
 
         # Inject past agent memories as context (optional — no-op when memory_store is None)
         if self.memory_store:
@@ -201,7 +231,7 @@ class AgentRunner:
 
             # Call post_execute hook if present — may transform result
             if "post_execute" in hooks:
-                result = hooks["post_execute"](manifest, task, result)
+                result = _call_hook_safe(hooks["post_execute"], manifest, task, result)
 
             _set_state(AgentState.VALIDATING, agent_id)
 

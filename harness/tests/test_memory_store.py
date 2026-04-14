@@ -175,3 +175,147 @@ class TestFileMemoryStore:
         entries = store2.recall("agent-a")
         assert len(entries) == 1
         assert entries[0]["value"] == "persistent value"
+
+
+# ---------------------------------------------------------------------------
+# FileMemoryStore — max_entries compaction
+# ---------------------------------------------------------------------------
+
+class TestFileMemoryStoreMaxEntries:
+    def test_max_entries_keeps_only_last_n(self, tmp_path):
+        """Storing 10 entries with max_entries=5 retains only the 5 most recent."""
+        store = FileMemoryStore(base_dir=tmp_path, max_entries=5)
+        for i in range(10):
+            store.store("agent-a", "key", f"value-{i}")
+        entries = store.recall("agent-a", k=100)
+        assert len(entries) == 5
+        values = [e["value"] for e in entries]
+        assert values == [f"value-{i}" for i in range(5, 10)]
+
+    def test_max_entries_does_not_evict_when_under_limit(self, tmp_path):
+        """Storing fewer entries than max_entries must keep them all."""
+        store = FileMemoryStore(base_dir=tmp_path, max_entries=10)
+        for i in range(4):
+            store.store("agent-a", "key", f"value-{i}")
+        entries = store.recall("agent-a", k=100)
+        assert len(entries) == 4
+
+    def test_max_entries_scoped_per_agent(self, tmp_path):
+        """Eviction for agent-a must not affect agent-b."""
+        store = FileMemoryStore(base_dir=tmp_path, max_entries=3)
+        for i in range(6):
+            store.store("agent-a", "key", f"a-value-{i}")
+        store.store("agent-b", "key", "b-only")
+        a_entries = store.recall("agent-a", k=100)
+        b_entries = store.recall("agent-b", k=100)
+        assert len(a_entries) == 3
+        assert len(b_entries) == 1
+
+    def test_compaction_preserves_recent_entries(self, tmp_path):
+        """After compaction the retained entries must be the chronologically newest ones."""
+        store = FileMemoryStore(base_dir=tmp_path, max_entries=3)
+        for i in range(5):
+            store.store("agent-a", "key", f"value-{i}")
+        entries = store.recall("agent-a", k=100)
+        values = [e["value"] for e in entries]
+        assert values == ["value-2", "value-3", "value-4"]
+
+    def test_compact_rewrites_file_not_appends(self, tmp_path):
+        """The JSONL file line count must equal max_entries after compaction."""
+        store = FileMemoryStore(base_dir=tmp_path, max_entries=3)
+        for i in range(7):
+            store.store("agent-a", "key", f"value-{i}")
+        memories_file = tmp_path / "agent-a" / "memories.jsonl"
+        lines = [l for l in memories_file.read_text().splitlines() if l.strip()]
+        assert len(lines) == 3
+
+
+# ---------------------------------------------------------------------------
+# FileMemoryStore — max_age_seconds TTL eviction
+# ---------------------------------------------------------------------------
+
+class TestFileMemoryStoreMaxAge:
+    def test_max_age_evicts_old_entries(self, tmp_path):
+        """Entries older than max_age_seconds are removed during compaction."""
+        store = FileMemoryStore(base_dir=tmp_path, max_age_seconds=0.05)
+        store.store("agent-a", "key", "old-value")
+        time.sleep(0.1)  # let the entry age past the TTL
+        store.store("agent-a", "key", "new-value")  # triggers compaction
+        entries = store.recall("agent-a", k=100)
+        values = [e["value"] for e in entries]
+        assert "old-value" not in values
+        assert "new-value" in values
+
+    def test_max_age_keeps_recent_entries(self, tmp_path):
+        """Entries within the TTL window must survive compaction."""
+        store = FileMemoryStore(base_dir=tmp_path, max_age_seconds=60)
+        store.store("agent-a", "key", "fresh-value")
+        store.store("agent-a", "key", "another-fresh")
+        entries = store.recall("agent-a", k=100)
+        assert len(entries) == 2
+
+    def test_max_age_none_disables_age_eviction(self, tmp_path):
+        """When max_age_seconds is None no age-based eviction occurs."""
+        store = FileMemoryStore(base_dir=tmp_path, max_entries=100, max_age_seconds=None)
+        for i in range(5):
+            store.store("agent-a", "key", f"value-{i}")
+        entries = store.recall("agent-a", k=100)
+        assert len(entries) == 5
+
+    def test_max_age_combined_with_max_entries(self, tmp_path):
+        """Age eviction runs before count eviction; both limits are respected."""
+        store = FileMemoryStore(base_dir=tmp_path, max_entries=2, max_age_seconds=0.05)
+        store.store("agent-a", "key", "stale-1")
+        store.store("agent-a", "key", "stale-2")
+        time.sleep(0.1)
+        store.store("agent-a", "key", "fresh-1")
+        store.store("agent-a", "key", "fresh-2")
+        store.store("agent-a", "key", "fresh-3")  # triggers compaction with max_entries=2
+        entries = store.recall("agent-a", k=100)
+        values = [e["value"] for e in entries]
+        assert "stale-1" not in values
+        assert "stale-2" not in values
+        assert len(entries) == 2
+        assert values == ["fresh-2", "fresh-3"]
+
+
+# ---------------------------------------------------------------------------
+# InMemoryMemoryStore — max_entries
+# ---------------------------------------------------------------------------
+
+class TestInMemoryMemoryStoreMaxEntries:
+    def test_max_entries_keeps_only_last_n(self):
+        """Storing 10 entries with max_entries=5 retains only the 5 most recent."""
+        store = InMemoryMemoryStore(max_entries=5)
+        for i in range(10):
+            store.store("agent-a", "key", f"value-{i}")
+        entries = store.recall("agent-a", k=100)
+        assert len(entries) == 5
+        values = [e["value"] for e in entries]
+        assert values == [f"value-{i}" for i in range(5, 10)]
+
+    def test_max_entries_default_is_100(self):
+        """Default max_entries=100 must allow storing 100 entries without eviction."""
+        store = InMemoryMemoryStore()
+        for i in range(100):
+            store.store("agent-a", "key", f"value-{i}")
+        entries = store.recall("agent-a", k=200)
+        assert len(entries) == 100
+
+    def test_max_entries_evicts_on_101st_store(self):
+        """The 101st store with default max_entries=100 drops the oldest entry."""
+        store = InMemoryMemoryStore()
+        for i in range(101):
+            store.store("agent-a", "key", f"value-{i}")
+        entries = store.recall("agent-a", k=200)
+        assert len(entries) == 100
+        assert entries[0]["value"] == "value-1"  # value-0 was evicted
+
+    def test_max_entries_scoped_per_agent(self):
+        """Eviction for agent-a must not affect agent-b."""
+        store = InMemoryMemoryStore(max_entries=3)
+        for i in range(6):
+            store.store("agent-a", "key", f"a-value-{i}")
+        store.store("agent-b", "key", "b-only")
+        assert len(store.recall("agent-a", k=100)) == 3
+        assert len(store.recall("agent-b", k=100)) == 1
