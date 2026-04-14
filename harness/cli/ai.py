@@ -317,19 +317,37 @@ def run() -> None:
     """Run agents or workflows."""
 
 
-def _make_provider(dry_run: bool, provider_config_path: str | None = None) -> Any:
+def _make_provider(dry_run: bool, provider_config_path: str | None = None, provider_override: str = "auto") -> Any:
     """Create the appropriate LLM provider.
 
     Priority:
-    1. --dry-run → DryRunProvider (no API calls)
+    0. GENTCORE_PROVIDER=dry-run env var → DryRunProvider (always free)
+    1. --provider flag or --dry-run → DryRunProvider (no API calls)
     2. provider_config_path → read model/provider from domain's provider.yaml
-    3. ANTHROPIC_API_KEY set → AnthropicProvider (direct API)
-    4. claude CLI available + logged in → ClaudeCodeProvider (subscription billing)
+    3. ANTHROPIC_API_KEY set → AnthropicProvider (direct API, charges apply)
+    4. claude CLI available → ClaudeCodeProvider (subscription billing)
     5. Error: no provider available
     """
+    # Check GENTCORE_PROVIDER env var override (highest priority)
+    env_provider = os.environ.get("GENTCORE_PROVIDER", "")
+    if env_provider == "dry-run" or provider_override == "dry-run":
+        from harness.providers.dry_run import DryRunProvider
+        click.echo("  provider: DryRunProvider (no API calls)")
+        return DryRunProvider()
+
     if dry_run:
         from harness.providers.dry_run import DryRunProvider
+        click.echo("  provider: DryRunProvider (--dry-run)")
         return DryRunProvider()
+
+    if provider_override == "claudecode":
+        import shutil
+        if shutil.which("claude"):
+            from harness.providers.claudecode_provider import ClaudeCodeProvider
+            click.echo("  provider: Claude Code CLI (subscription billing)")
+            return ClaudeCodeProvider()
+        click.echo("Error: claude CLI not found in PATH.", err=True)
+        raise SystemExit(1)
 
     # Read domain-level provider config (model selection, not credentials)
     provider_cfg: dict[str, Any] = {}
@@ -349,34 +367,39 @@ def _make_provider(dry_run: bool, provider_config_path: str | None = None) -> An
         api_key = os.environ.get(api_key_env, "")
         if api_key:
             from harness.providers.anthropic_provider import AnthropicProvider
+            click.echo(f"  provider: Anthropic API ({model})")
             return AnthropicProvider(api_key=api_key, model=model, max_tokens=max_tokens)
     elif provider_name == "openai":
         api_key = os.environ.get(api_key_env, "")
         if api_key:
             from harness.providers.openai_provider import OpenAIProvider
+            click.echo(f"  provider: OpenAI API ({model})")
             return OpenAIProvider(api_key=api_key, model=model, max_tokens=max_tokens)
     elif provider_name == "bedrock":
         from harness.providers.bedrock_provider import BedrockProvider
+        click.echo(f"  provider: AWS Bedrock ({model})")
         return BedrockProvider(model=model)
 
     # Fallback: try ANTHROPIC_API_KEY directly
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if api_key:
         from harness.providers.anthropic_provider import AnthropicProvider
+        click.echo("  provider: Anthropic API (ANTHROPIC_API_KEY fallback)")
         return AnthropicProvider(api_key=api_key)
 
     # Last resort: Claude Code subscription
     import shutil
     if shutil.which("claude"):
         from harness.providers.claudecode_provider import ClaudeCodeProvider
-        click.echo("  provider: Claude Code (subscription billing)")
+        click.echo("  provider: Claude Code CLI (subscription billing)")
         return ClaudeCodeProvider()
 
     click.echo(
         "Error: No LLM provider available.\n"
         "  Set ANTHROPIC_API_KEY for direct API, or\n"
         "  Install Claude Code CLI for subscription billing, or\n"
-        "  Use --dry-run to test without an API.",
+        "  Use --dry-run to test without an API.\n"
+        "  Tip: export GENTCORE_PROVIDER=dry-run to always use dry-run mode.",
         err=True,
     )
     raise SystemExit(1)
@@ -1033,6 +1056,18 @@ def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, d
         raise SystemExit(1)
 
     provider = _make_provider(dry_run, provider_config_path=provider_config_path)
+
+    # Warn before real genesis runs (7+ LLM calls, significant token usage)
+    if not dry_run:
+        pname = getattr(provider, "provider_name", type(provider).__name__)
+        if pname != "DryRunProvider":
+            click.echo(f"\n  Genesis will run 7 agents using {pname}.")
+            click.echo("  Estimated: ~7 LLM calls, ~50k-200k tokens.")
+            click.echo("  Tip: use --dry-run to test without charges.\n")
+            if not click.confirm("  Proceed?", default=False):
+                click.echo("  Aborted.")
+                return
+
     loader = ManifestLoader()
 
     engine, workflow_data, step_configs = loader.boot_engine(

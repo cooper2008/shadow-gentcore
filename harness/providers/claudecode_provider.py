@@ -61,7 +61,7 @@ class ClaudeCodeProvider(BaseProvider):
             full_prompt = full_prompt[:50000] + "\n\n[Context truncated. Produce your output now.]"
 
         # Build command — NO --system-prompt flag (everything goes through stdin)
-        cmd = ["claude", "-p", "--dangerously-skip-permissions", "--max-turns", "50"]
+        cmd = ["claude", "-p", "--dangerously-skip-permissions", "--max-turns", "1"]
 
         # Remove ANTHROPIC_API_KEY so claude uses subscription auth
         env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}

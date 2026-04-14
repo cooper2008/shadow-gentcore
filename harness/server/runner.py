@@ -63,6 +63,10 @@ def _make_provider(domain_path: str, dry_run: bool = False) -> Any:
     """Build a provider from the domain's provider.yaml, or dry-run if not found."""
     from harness.providers.dry_run import DryRunProvider
 
+    # GENTCORE_PROVIDER=dry-run overrides everything (for safe local testing)
+    if os.environ.get("GENTCORE_PROVIDER", "") == "dry-run":
+        return DryRunProvider()
+
     provider_yaml = Path(domain_path) / "config" / "provider.yaml"
     if dry_run or not provider_yaml.exists():
         return DryRunProvider()
