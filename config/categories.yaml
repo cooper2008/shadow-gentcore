@@ -11,7 +11,7 @@
 categories:
   reasoning:
     provider: anthropic
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4-6-20250414
     temperature: 0.3
     max_tokens: 4096
     thinking:
@@ -20,7 +20,7 @@ categories:
 
   fast-codegen:
     provider: anthropic
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4-6-20250414
     temperature: 0.2
     max_tokens: 8192
     thinking:
@@ -28,7 +28,7 @@ categories:
 
   security-analysis:
     provider: anthropic
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4-6-20250414
     temperature: 0.1
     max_tokens: 4096
     thinking:
@@ -37,7 +37,7 @@ categories:
 
   cost-optimized:
     provider: anthropic
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4-6-20250414
     temperature: 0.2
     max_tokens: 4096
     thinking:

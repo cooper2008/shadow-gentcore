@@ -21,7 +21,7 @@ class BedrockProvider(BaseProvider):
     def __init__(
         self,
         region: str = "us-east-1",
-        model_id: str = "anthropic.claude-3-sonnet-20240229-v1:0",
+        model_id: str = "anthropic.claude-sonnet-4-6-20250414-v1:0",
         max_tokens: int = 4096,
         bearer_token: str = "",
     ) -> None:

@@ -21,7 +21,7 @@ class OpenAIProvider(BaseProvider):
     def __init__(
         self,
         api_key: str = "",
-        model: str = "gpt-4o",
+        model: str = "gpt-5.4",
         max_tokens: int = 4096,
     ) -> None:
         self._api_key = api_key

@@ -18,7 +18,7 @@ class ReplayRecorder:
         # Wrap provider calls:
         recorder.record_call(
             provider="anthropic",
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6-20250414",
             messages=[...],
             response={...},
         )

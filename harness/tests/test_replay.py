@@ -24,7 +24,7 @@ class TestReplayRecorder:
         recorder.start_session("test_session")
         recorder.record_call(
             provider="anthropic",
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6-20250414",
             messages=[{"role": "user", "content": "Hello"}],
             response={"content": "Hi there"},
             tokens_used=50,
@@ -37,7 +37,7 @@ class TestReplayRecorder:
         recorder.start_session("test_save")
         recorder.record_call(
             provider="anthropic",
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6-20250414",
             messages=[{"role": "user", "content": "Hello"}],
             response={"content": "Hi there"},
         )
@@ -59,7 +59,7 @@ class TestReplayRecorder:
         for i in range(3):
             recorder.record_call(
                 provider="anthropic",
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6-20250414",
                 messages=[{"role": "user", "content": f"Message {i}"}],
                 response={"content": f"Response {i}"},
             )
@@ -82,7 +82,7 @@ class TestReplayPlayer:
         for i in range(3):
             recorder.record_call(
                 provider="anthropic",
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6-20250414",
                 messages=[{"role": "user", "content": f"Msg {i}"}],
                 response={"content": f"Resp {i}"},
                 tool_calls=[{"name": f"tool_{i}"}] if i == 1 else [],

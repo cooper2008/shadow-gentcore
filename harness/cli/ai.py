@@ -352,7 +352,7 @@ def _make_provider(dry_run: bool, provider_config_path: str | None = None, provi
     if provider_override == "bedrock":
         from harness.providers.bedrock_provider import BedrockProvider
         region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
-        model = os.environ.get("BEDROCK_MODEL", "anthropic.claude-3-sonnet-20240229-v1:0")
+        model = os.environ.get("BEDROCK_MODEL", "anthropic.claude-sonnet-4-6-20250414-v1:0")
         click.echo(f"  provider: AWS Bedrock ({model}, {region})")
         return BedrockProvider(region=region, model_id=model)
 
@@ -375,7 +375,7 @@ def _make_provider(dry_run: bool, provider_config_path: str | None = None, provi
             provider_cfg = raw
 
     provider_name = provider_cfg.get("provider", "anthropic")
-    model = provider_cfg.get("model", "claude-sonnet-4-20250514")
+    model = provider_cfg.get("model", "claude-sonnet-4-6-20250414")
     max_tokens = int(provider_cfg.get("max_tokens", 8192))
     api_key_env = provider_cfg.get("api_key_env", "ANTHROPIC_API_KEY")
 
