@@ -22,10 +22,13 @@ domain repos             acme-backend, shop-platform, your-domain, ...
                             DOMAIN TEAM
                                |
                     1. Clone gentcore-template
-                    2. Edit domain.yaml (name, owner, purpose)
-                    3. Add source code to src/
+                    2. Edit domain.yaml:
+                       - name, owner, purpose
+                       - target: [../my-app]      <- YOUR repos (genesis reads these)
+                       - reference: [../standard]  <- optional best practices
+                       - docs: [../my-docs]        <- optional wikis/specs
                                |
-                    4. bash scripts/bootstrap.sh
+                    3. bash scripts/bootstrap.sh
                                |
                                v
          +-------------------------------------------+
@@ -40,18 +43,18 @@ domain repos             acme-backend, shop-platform, your-domain, ...
          |                   (feedback loop x3)       |
          +-------------------------------------------+
                                |
-                    GENERATED OUTPUT:
-                    context/standards.md
-                    context/architecture.md
-                    agents/{Name}/v1/
+                    GENERATED OUTPUT (in domain repo):
+                    context/standards.md       <- learned from your code
+                    context/architecture.md    <- learned from your code
+                    agents/{Name}/v1/          <- custom agents for YOUR stack
                       agent_manifest.yaml
                       system_prompt.md
                       grading_criteria.yaml
                     workflows/feature_delivery.yaml
                                |
-                    5. git commit & push
+                    4. git commit & push
                                |
-                    6. Use agents:
+                    5. Use agents (they work ON your target repos):
                        - Local CLI: ai run agent X --task "..."
                        - HTTP API:  curl POST /run/agent
                        - GitHub Actions: agent-task.yml
@@ -432,21 +435,29 @@ pytest harness/tests/ -q      # full suite
 git clone https://github.com/cooper2008/gentcore-template my-domain
 cd my-domain
 
-# 2. Configure (1 line)
-# Edit domain.yaml: set name: my-domain
+# 2. Configure domain.yaml
+#    name: my-domain
+#    owner: my-team
+#    purpose: What this domain does
+#    target:                          # point genesis at YOUR repos
+#      - path: ../my-app             # genesis READS this to learn your stack
+#    reference:                       # optional: best-practice examples
+#      - path: ../golden-standard
+#    docs:                            # optional: wikis, specs, guides
+#      - path: ../my-docs
 
-# 3. Add your code
-cp -r ../my-app/src src/
-cp -r ../my-app/tests tests/
-
-# 4. Generate agents
+# 3. Generate agents (genesis reads your repos, generates agents)
 export ANTHROPIC_API_KEY=sk-ant-...
 bash scripts/bootstrap.sh
 
-# 5. Use agents
+# 4. Use agents (they work ON your target repos)
 ai run agent CodeWriterAgent/v1 --task "Add reviews endpoint" --domain .
 
-# 6. Commit generated agents
+# 5. Commit generated agents
 git add context/ agents/ workflows/
 git commit -m "genesis: initial domain agents"
 ```
+
+**Note:** The domain repo contains config + generated agents only. Your source code
+stays in its own repo. Genesis **reads** your repos via `target:` / `reference:` /
+`docs:` paths in domain.yaml — it does not need code copied into the domain repo.
