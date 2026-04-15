@@ -589,6 +589,41 @@ class CompositionEngine:
             except (TypeError, ValueError):
                 return False
 
+        # <step>.<field> == <value>  (e.g. "validate.validation_passed == false")
+        # Used in feedback_loops conditions — evaluate against nested result fields
+        dotpath_match = re.fullmatch(
+            r"(\w+)\.(\w+(?:\.\w+)*)\s*==\s*(.+)", cond
+        )
+        if dotpath_match:
+            _step, field_path, expected = dotpath_match.groups()
+            expected = expected.strip().strip("'\"")
+            # Navigate the field path in the result
+            obj: Any = result
+            for part in field_path.split("."):
+                if isinstance(obj, dict):
+                    obj = obj.get(part)
+                else:
+                    obj = None
+                    break
+            # Compare (handle bool-like strings)
+            actual_str = str(obj).lower() if obj is not None else "none"
+            return actual_str == expected.lower()
+
+        # <step>.<field> is not empty  (e.g. "validate.issues.cross_reference is not empty")
+        notempty_match = re.fullmatch(
+            r"(\w+)\.([\w.]+)\s+is\s+not\s+empty", cond
+        )
+        if notempty_match:
+            _step, field_path = notempty_match.groups()
+            obj = result
+            for part in field_path.split("."):
+                if isinstance(obj, dict):
+                    obj = obj.get(part)
+                else:
+                    obj = None
+                    break
+            return bool(obj)
+
         # Fail-closed: unrecognized condition
         logger.warning(
             "Unrecognized gate condition %r — failing closed (returning False). "
