@@ -34,6 +34,7 @@ Token profile for a 20-tool agent (12 L2, 8 L1)
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -143,8 +144,9 @@ class ToolDisclosureRouter:
     def detect_and_promote(self, text: str) -> list[str]:
         """Scan LLM output for L1 tool name mentions and promote matched tools.
 
-        A tool is promoted when its exact name appears anywhere in ``text``
-        (case-sensitive exact match to avoid false positives on short names).
+        H-TDS fix: word-boundary regex match (case-sensitive). Replaces the
+        substring `name in text` check, which false-promoted short tool names
+        ("list", "read") on any prose mention ("checklist", "readme").
 
         Args:
             text: Combined LLM content + tool_call names from the last step.
@@ -154,7 +156,7 @@ class ToolDisclosureRouter:
         """
         newly_promoted: list[str] = []
         for name in list(self._l1_pending):
-            if name in text:
+            if re.search(rf"\b{re.escape(name)}\b", text):
                 self._l1_pending.discard(name)
                 self._promoted.add(name)
                 newly_promoted.append(name)

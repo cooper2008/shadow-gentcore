@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
-from collections import defaultdict
 from enum import Enum
 from typing import Any
 
+from harness.core.expr import evaluate as expr_evaluate
 from harness.core.step_contract import StepArtifact, propagate_confidence
 from harness.core.workflow_state import InMemoryStateStore, WorkflowStateStore
 
@@ -551,86 +550,23 @@ class CompositionEngine:
         return None
 
     def _evaluate_condition(self, condition: str, result: dict[str, Any]) -> bool:
-        """Evaluate a gate condition against step result.
+        """Evaluate a gate condition against a step result.
 
-        Recognized condition patterns (fail-closed — unknown conditions return False):
-          "true" / "always_pass"           → True
-          "false" / "always_fail"          → False
-          "status == success"              → result status is "success" or "completed"
-          "status == completed"            → result status is "success" or "completed"
-          "has_output"                     → result has non-empty output/content
-          "score >= N"                     → validation score >= N (float)
+        Delegates to harness.core.expr.evaluate (H2 — unified evaluator).
+        Supports legacy aliases (`true`/`false`/`has_output`/`score >= N`/
+        `<dotpath> is not empty`/`<field>_exists`) AND the full grammar
+        (and/or/not, 6 comparators, dotpath, len(), is None / is empty,
+        contains, in). Unparseable expressions log a warning and return
+        False — fail-closed.
 
-        Any unrecognized condition string logs a warning and returns False.
+        Pre-H2 special: `status == success` and `status == completed` were
+        treated as synonyms. Preserved here so existing workflows behave
+        identically.
         """
         cond = condition.strip()
-
-        if cond in ("true", "always_pass"):
-            return True
-
-        if cond in ("false", "always_fail"):
-            return False
-
-        status = result.get("status", "")
         if cond in ("status == success", "status == completed"):
-            return status in ("success", "completed")
-
-        if cond == "has_output":
-            output = result.get("output") or result.get("content") or ""
-            return bool(output)
-
-        # score >= N  (e.g. "score >= 0.7")
-        score_match = re.fullmatch(r"score\s*>=\s*([0-9]*\.?[0-9]+)", cond)
-        if score_match:
-            threshold = float(score_match.group(1))
-            actual_score = result.get("_validation", {}).get("score", 0)
-            try:
-                return float(actual_score) >= threshold
-            except (TypeError, ValueError):
-                return False
-
-        # <step>.<field> == <value>  (e.g. "validate.validation_passed == false")
-        # Used in feedback_loops conditions — evaluate against nested result fields
-        dotpath_match = re.fullmatch(
-            r"(\w+)\.(\w+(?:\.\w+)*)\s*==\s*(.+)", cond
-        )
-        if dotpath_match:
-            _step, field_path, expected = dotpath_match.groups()
-            expected = expected.strip().strip("'\"")
-            # Navigate the field path in the result
-            obj: Any = result
-            for part in field_path.split("."):
-                if isinstance(obj, dict):
-                    obj = obj.get(part)
-                else:
-                    obj = None
-                    break
-            # Compare (handle bool-like strings)
-            actual_str = str(obj).lower() if obj is not None else "none"
-            return actual_str == expected.lower()
-
-        # <step>.<field> is not empty  (e.g. "validate.issues.cross_reference is not empty")
-        notempty_match = re.fullmatch(
-            r"(\w+)\.([\w.]+)\s+is\s+not\s+empty", cond
-        )
-        if notempty_match:
-            _step, field_path = notempty_match.groups()
-            obj = result
-            for part in field_path.split("."):
-                if isinstance(obj, dict):
-                    obj = obj.get(part)
-                else:
-                    obj = None
-                    break
-            return bool(obj)
-
-        # Fail-closed: unrecognized condition
-        logger.warning(
-            "Unrecognized gate condition %r — failing closed (returning False). "
-            "Add this condition to _evaluate_condition if it is intentional.",
-            cond,
-        )
-        return False
+            return result.get("status", "") in ("success", "completed")
+        return expr_evaluate(condition, result)
 
     def _evaluate_route_condition(self, condition: str, result: dict[str, Any]) -> bool:
         """Evaluate a router condition against step result output.

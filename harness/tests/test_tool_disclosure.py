@@ -365,3 +365,42 @@ class TestReActProgressiveIntegration:
             # After promotion, gh_create_pr should appear
             later_tools = set().union(*captured_tool_names[1:])
             assert "gh_create_pr" in later_tools
+
+
+class TestWordBoundaryDetection:
+    """H-TDS fold: detect_and_promote uses word boundaries to avoid false positives."""
+
+    def _make_router(self, tool_names: list[str]):
+        from harness.core.tool_disclosure import ToolDisclosureRouter
+        tools = [{"name": name, "desc": f"{name} tool", "level": "L1"} for name in tool_names]
+        return ToolDisclosureRouter(tools, _MockExecutor(tool_names))
+
+    def test_substring_in_other_word_does_not_promote(self) -> None:
+        router = self._make_router(["list"])
+        # "checklist" contains "list" as a substring but NOT as a word
+        promoted = router.detect_and_promote("Here is a checklist of items")
+        assert promoted == []
+
+    def test_substring_in_compound_does_not_promote(self) -> None:
+        router = self._make_router(["read"])
+        # "readme" contains "read" but isn't a word boundary match
+        promoted = router.detect_and_promote("See the readme for details")
+        assert promoted == []
+
+    def test_word_boundary_match_promotes(self) -> None:
+        router = self._make_router(["list", "read"])
+        promoted = router.detect_and_promote("I want to read and list the entries")
+        assert set(promoted) == {"list", "read"}
+
+    def test_punctuation_is_a_boundary(self) -> None:
+        router = self._make_router(["file_read"])
+        promoted = router.detect_and_promote("Calling file_read(path).")
+        assert promoted == ["file_read"]
+
+    def test_underscore_in_name_still_works(self) -> None:
+        # Tool names containing underscores are valid word characters; entire
+        # name must appear as one token.
+        router = self._make_router(["gh_create_pr"])
+        # "gh_create" inside "gh_create_pr" is a substring but not a word match
+        promoted = router.detect_and_promote("I'll use gh_create_pr to open it")
+        assert promoted == ["gh_create_pr"]

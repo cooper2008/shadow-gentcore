@@ -111,3 +111,36 @@ class TestPromptAssembler:
         assert "Constraints" in system_content
         assert "Context" in system_content
         assert messages[1]["role"] == "user"
+
+
+class TestContextPrioritySort:
+    """H-PRI fold: context items sorted by priority desc before formatting."""
+
+    def test_higher_priority_appears_first(self, assembler: PromptAssembler) -> None:
+        items = [
+            {"source": "low", "content": "low_content", "priority": 1},
+            {"source": "high", "content": "high_content", "priority": 9},
+            {"source": "mid", "content": "mid_content", "priority": 5},
+        ]
+        formatted = assembler._format_context(items)  # type: ignore[attr-defined]
+        # Verify ordering: high → mid → low
+        assert formatted.index("high_content") < formatted.index("mid_content")
+        assert formatted.index("mid_content") < formatted.index("low_content")
+
+    def test_missing_priority_treated_as_zero(self, assembler: PromptAssembler) -> None:
+        items = [
+            {"source": "no_pri", "content": "no_priority_content"},
+            {"source": "high", "content": "priority_10_content", "priority": 10},
+        ]
+        formatted = assembler._format_context(items)  # type: ignore[attr-defined]
+        # priority=10 wins over missing-priority (=0)
+        assert formatted.index("priority_10_content") < formatted.index("no_priority_content")
+
+    def test_stable_order_for_ties(self, assembler: PromptAssembler) -> None:
+        items = [
+            {"source": "a", "content": "first", "priority": 5},
+            {"source": "b", "content": "second", "priority": 5},
+            {"source": "c", "content": "third", "priority": 5},
+        ]
+        formatted = assembler._format_context(items)  # type: ignore[attr-defined]
+        assert formatted.index("first") < formatted.index("second") < formatted.index("third")
