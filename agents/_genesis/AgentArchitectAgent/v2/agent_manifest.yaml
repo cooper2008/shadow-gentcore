@@ -1,0 +1,277 @@
+id: _genesis/AgentArchitectAgent/v2
+domain: _genesis
+pack: core
+category: reasoning
+version: "2.0.0"
+description: >-
+  Catalog-driven architect — composes workflows from the existing _shared/
+  stage catalog + capability map (B2) rather than inventing bespoke rosters
+  each run. Emits capability_bindings per step + a reuse/synthesize decision.
+  Output_schema now requires `harness` on every roster entry (audit G-ARC).
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: plan_execute
+  fallback: react
+  max_react_steps: 8
+  max_plan_steps: 10
+
+tools:
+  - name: file_read
+    description: "Read the _shared/ stage catalog, config/capabilities.yaml, and the industry registry"
+    pack: "toolpack://core/filesystem"
+  - name: search_files
+    description: "Locate stage manifests and existing reference workflows"
+    pack: "toolpack://core/search"
+
+constraints:
+  read_only: true
+
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+
+input_schema:
+  type: object
+  required: [knowledge_map, context_docs, tools_discovered]
+  properties:
+    knowledge_map:
+      type: object
+      description: "Classified knowledge map from KnowledgeMapperAgent"
+    context_docs:
+      type: object
+      description: "Generated context documents from ContextEngineerAgent"
+    tools_discovered:
+      type: object
+      description: "Discovered tools and configurations from ToolDiscoveryAgent"
+    industry:
+      type: string
+      description: >-
+        Domain industry tag (from DomainManifest.industry, B4). Used to load
+        stage_defaults from config/capabilities.yaml (B2). Free-form string;
+        values without a stage_defaults entry fall back to the SWE defaults.
+    stage_catalog:
+      type: array
+      description: >-
+        Available _shared/ stages with stage tag, purpose, and sample manifests.
+        Passed in by the workflow so the architect doesn't re-scan on every run.
+      items:
+        type: object
+        required: [name, stage]
+        properties:
+          name: {type: string, description: "Agent name (e.g. CodeWriterAgent)"}
+          stage: {type: string, description: "Stage tag from the Stage enum"}
+          purpose: {type: string}
+    capability_map:
+      type: object
+      description: >-
+        Parsed capabilities.yaml (B2). Dict with `capabilities` and
+        `stage_defaults` keys. The architect reads stage_defaults to pick
+        capability sets per stage, then resolves packs via capabilities.
+
+output_schema:
+  type: object
+  required: [agent_roster, workflow_design, tool_assignments, grading_specs, design_quality]
+  properties:
+    agent_roster:
+      type: array
+      items:
+        type: object
+        # G-ARC fix: `harness` is now REQUIRED. Pre-v2 the validator accepted
+        # designs without it; Builder then had nothing to wire gates from.
+        required: [name, purpose, category, version, description, execution_mode, tools, permissions, constraints, input_schema, output_schema, harness, decision]
+        properties:
+          name: {type: string}
+          purpose: {type: string}
+          version: {type: string, default: "1.0.0"}
+          description: {type: string}
+          category:
+            type: string
+            # S3-aware: include ops + compliance so retagged _shared/ agents
+            # can be reused without rewriting their category.
+            enum: [reasoning, fast-codegen, security-analysis, cost-optimized, ops, compliance]
+          execution_mode:
+            type: object
+            properties:
+              primary: {type: string}
+              fallback: {type: string}
+              max_react_steps: {type: integer}
+              max_plan_steps: {type: integer}
+          tools:
+            type: array
+            items:
+              type: object
+              required: [name, pack]
+              properties:
+                name: {type: string}
+                description: {type: string}
+                pack: {type: string}
+          permissions:
+            type: object
+            properties:
+              file_edit: {type: string, enum: [allow, deny, ask]}
+              file_create: {type: string, enum: [allow, deny, ask]}
+              shell_command: {type: string, enum: [allow, deny, ask]}
+              network_access: {type: string, enum: [allow, deny]}
+          constraints:
+            type: object
+            description: "Agent-specific safety constraints"
+          input_schema: {type: object}
+          output_schema: {type: object}
+          compliance_constraints:
+            type: array
+            items: {type: string}
+          harness:
+            type: object
+            description: "Harness behavior — REQUIRED per audit G-ARC"
+            required: [gate_condition, gate_on_fail, max_retries, grading_threshold]
+            properties:
+              gate_condition: {type: string}
+              gate_on_fail: {type: string, enum: [retry, retry_fresh, abort, degrade, escalate_human]}
+              max_retries: {type: integer}
+              fallback_step: {type: string}
+              grading_threshold: {type: number}
+          # B5 additions — catalog-driven composition signal
+          decision:
+            type: string
+            description: >-
+              How this roster entry was produced:
+              - reuse-core: pointing at an existing _shared/ agent (no new files)
+              - reuse-with-prompt-override: _shared/ agent + a thin domain prompt patch
+              - synthesize-new: novel stage that catalog didn't cover — Builder must author
+              - ask-human: design gap requiring human review
+            enum: [reuse-core, reuse-with-prompt-override, synthesize-new, ask-human]
+          capability_bindings:
+            type: array
+            description: >-
+              Per-step capability resolution. Each binding records which
+              capability the step needs and which toolpacks satisfy it. The
+              Builder uses this to set `tools:` on the generated manifest OR
+              on the workflow step (when reusing an _shared/ agent).
+            items:
+              type: object
+              required: [capability, resolved_packs]
+              properties:
+                capability: {type: string}
+                resolved_packs:
+                  type: array
+                  items: {type: string}
+          justification:
+            type: string
+            description: >-
+              One-sentence explanation of why this decision was chosen. Kept
+              in the roster for audit/replay — humans can scan and spot
+              mis-applied defaults.
+    workflow_design:
+      type: object
+      required: [name, steps, gates]
+      properties:
+        name: {type: string}
+        steps:
+          type: array
+          items:
+            type: object
+            required: [agent, depends_on]
+            properties:
+              agent: {type: string}
+              depends_on:
+                type: array
+                items: {type: string}
+              description: {type: string}
+              capabilities:
+                type: array
+                description: "B5 — capability names this step needs (for traceability)"
+                items: {type: string}
+        gates:
+          type: array
+          items:
+            type: object
+            required: [after_step, criteria]
+            properties:
+              after_step: {type: string}
+              criteria: {type: string}
+              blocking: {type: boolean}
+        feedback_loops:
+          type: array
+          items:
+            type: object
+            required: [from, to, condition]
+            properties:
+              from: {type: string}
+              to: {type: string}
+              condition: {type: string}
+              max_retries: {type: integer}
+        parallel_branches:
+          type: array
+          items:
+            type: object
+            required: [agents]
+            properties:
+              agents:
+                type: array
+                items: {type: string}
+              join_step: {type: string}
+        budget:
+          type: object
+          properties:
+            max_total_tokens: {type: integer}
+            max_per_agent_tokens: {type: integer}
+            timeout_minutes: {type: integer}
+    tool_assignments:
+      type: object
+      description: "Map of agent_name to list of tools assigned"
+      additionalProperties:
+        type: array
+        items: {type: string}
+    grading_specs:
+      type: array
+      items:
+        type: object
+        required: [agent_name, automated_criteria, llm_judge_criteria, pass_threshold]
+        properties:
+          agent_name: {type: string}
+          automated_criteria:
+            type: array
+            items:
+              type: object
+              required: [name, check]
+              properties:
+                name: {type: string}
+                check: {type: string}
+                weight: {type: number}
+          llm_judge_criteria:
+            type: array
+            items:
+              type: object
+              required: [name, prompt]
+              properties:
+                name: {type: string}
+                prompt: {type: string}
+                weight: {type: number}
+          pass_threshold: {type: number, minimum: 0, maximum: 1}
+    design_quality:
+      type: object
+      required: [process_coverage_pct, dag_valid, agent_count, has_feedback_loops, has_compliance_gates, reuse_ratio]
+      properties:
+        process_coverage_pct: {type: number, minimum: 0, maximum: 100}
+        dag_valid: {type: boolean}
+        agent_count: {type: integer}
+        has_feedback_loops: {type: boolean}
+        has_compliance_gates: {type: boolean}
+        reuse_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: >-
+            B5 — fraction of roster entries with decision in
+            [reuse-core, reuse-with-prompt-override]. Higher = more catalog
+            reuse = less Builder work = cheaper + faster genesis.
+
+grading_criteria_ref: grading_criteria.yaml
+
+metadata:
+  author: platform-team
+  tags: [genesis, architect, design, workflow, meta-agent, catalog-driven]
