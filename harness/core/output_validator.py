@@ -242,75 +242,16 @@ class OutputValidator:
 
     @staticmethod
     def _eval_check(expr: str, output: dict[str, Any]) -> bool:
-        """Evaluate a simple check expression against output.
+        """Evaluate a grading-criteria check against output.
 
-        Supports:
-        - "exit_code == 0"
-        - "test_count >= 1"
-        - "scan_quality.overall >= 50" (dot-notation)
-        - "len(inventory) >= 5" (len expressions)
-        - "design_quality.dag_valid == true"
-        - "true" (always pass)
+        Delegates to harness.core.expr.evaluate (H2 — unified evaluator).
+        Same grammar as composition_engine gate conditions; supports the
+        legacy `field op value`, `field is not None`, `<expr> and <expr>`,
+        `len(field) op N`, `<field>_exists`, dot-notation, and bare
+        truthy field checks. See harness/core/expr.py for full grammar.
         """
-        if expr.strip() == "true":
-            return True
-        if expr.strip() == "false":
-            return False
-
-        # Handle "and" expressions: split and evaluate each part
-        if " and " in expr:
-            parts = expr.split(" and ")
-            return all(OutputValidator._eval_check(p.strip(), output) for p in parts)
-
-        # Handle "is not None" expressions
-        if expr.strip().endswith(" is not None"):
-            field = expr.strip().replace(" is not None", "")
-            return OutputValidator._resolve_field(output, field) is not None
-
-        # Parse "field op value"
-        for op in (">=", "<=", "==", "!=", ">", "<"):
-            if op in expr:
-                parts = expr.split(op, 1)
-                if len(parts) == 2:
-                    field = parts[0].strip()
-                    value_str = parts[1].strip()
-
-                    actual = OutputValidator._resolve_field(output, field)
-                    if actual is None:
-                        return False
-
-                    # Try numeric comparison
-                    try:
-                        actual_num = float(actual)
-                        expected_num = float(value_str)
-                        if op == "==":
-                            return actual_num == expected_num
-                        if op == "!=":
-                            return actual_num != expected_num
-                        if op == ">=":
-                            return actual_num >= expected_num
-                        if op == "<=":
-                            return actual_num <= expected_num
-                        if op == ">":
-                            return actual_num > expected_num
-                        if op == "<":
-                            return actual_num < expected_num
-                    except (ValueError, TypeError):
-                        pass
-
-                    # String comparison
-                    if op == "==":
-                        return str(actual).lower() == value_str.lower()
-                    if op == "!=":
-                        return str(actual).lower() != value_str.lower()
-                break
-
-        # Check if field exists and is truthy
-        field = expr.strip()
-        if field.endswith("_exists"):
-            field_name = field.replace("_exists", "")
-            return OutputValidator._resolve_field(output, field_name) is not None
-        return bool(OutputValidator._resolve_field(output, field))
+        from harness.core.expr import evaluate as _expr_evaluate
+        return _expr_evaluate(expr, output)
 
     async def _run_llm_judge(
         self,

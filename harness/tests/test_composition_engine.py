@@ -205,23 +205,28 @@ class TestEvaluateCondition:
     # ── Fail-closed for unknown conditions ───────────────────────────────
 
     def test_unknown_condition_returns_false(self, caplog: pytest.LogCaptureFixture) -> None:
-        with caplog.at_level(logging.WARNING, logger="harness.core.composition_engine"):
+        # H2 unified evaluator: invalid syntax (the bare `:`) fails to
+        # tokenize → fail-closed False with a warning.
+        with caplog.at_level(logging.WARNING, logger="harness.core.expr"):
             result = self.engine._evaluate_condition("output_contains:foo", {"output": "foo bar"})
         assert result is False
-        assert "Unrecognized gate condition" in caplog.text
+        assert "Unrecognized" in caplog.text or "Failed" in caplog.text
 
-    def test_empty_string_condition_returns_false(self, caplog: pytest.LogCaptureFixture) -> None:
-        with caplog.at_level(logging.WARNING, logger="harness.core.composition_engine"):
-            result = self.engine._evaluate_condition("", {})
+    def test_empty_string_condition_returns_false(self) -> None:
+        result = self.engine._evaluate_condition("", {})
         assert result is False
 
-    def test_arbitrary_string_condition_returns_false(self, caplog: pytest.LogCaptureFixture) -> None:
-        with caplog.at_level(logging.WARNING, logger="harness.core.composition_engine"):
-            result = self.engine._evaluate_condition("result_valid", {"result": "ok"})
+    def test_arbitrary_string_condition_returns_false(self) -> None:
+        # H2 unified evaluator: bare words are valid expressions (truthy
+        # field check). `result_valid` resolves to None → False. No
+        # warning — the syntax is valid even though the field is absent.
+        result = self.engine._evaluate_condition("result_valid", {"result": "ok"})
         assert result is False
-        assert "Unrecognized gate condition" in caplog.text
 
     def test_unknown_condition_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
-        with caplog.at_level(logging.WARNING, logger="harness.core.composition_engine"):
-            self.engine._evaluate_condition("score_check", {})
-        assert "score_check" in caplog.text
+        # H2: only un-tokenizable strings warn. `score_check` is now a
+        # valid bare-word truthy check. Use truly malformed syntax to
+        # trigger the fail-closed warning path.
+        with caplog.at_level(logging.WARNING, logger="harness.core.expr"):
+            self.engine._evaluate_condition("@@@ ???", {})
+        assert "Unrecognized" in caplog.text or "Failed" in caplog.text

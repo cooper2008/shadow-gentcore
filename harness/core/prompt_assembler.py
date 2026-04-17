@@ -135,9 +135,21 @@ class PromptAssembler:
         return "\n".join(lines)
 
     def _format_context(self, context_items: list[dict[str, str]]) -> str:
-        """Format context items into a system prompt section."""
+        """Format context items into a system prompt section.
+
+        H-PRI fix: sort items by `priority` (descending) before formatting so
+        higher-priority items (retry feedback at priority=9, dependency
+        artifacts at priority=8, domain standards at priority=10) land
+        earlier in the prompt and survive truncation under tight token
+        budgets. Stable sort preserves insertion order for ties.
+        """
         lines = ["## Context"]
-        for item in context_items:
+        ordered = sorted(
+            context_items,
+            key=lambda item: int(item.get("priority", 0) or 0),  # type: ignore[arg-type]
+            reverse=True,
+        )
+        for item in ordered:
             source = item.get("source", "unknown")
             content = item.get("content", "")
             lines.append(f"### {source}\n{content}")
