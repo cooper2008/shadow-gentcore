@@ -1,0 +1,52 @@
+# Industry Registry
+#
+# Optional enumeration of known industry tags used by DomainManifest.industry.
+# Consumed by the capability map (config/capabilities.yaml, lands in B2) to
+# resolve stage_defaults per industry. Currently informational — no runtime
+# enforcement — so domains may use free-form strings when experimenting.
+#
+# Conventions:
+#   - kebab-case (e.g. "aws-ops", not "aws_ops" or "AWSOps")
+#   - two-segment form <platform>-<function> when a platform anchor exists
+#   - "generic" reserved for domains that deliberately skip industry routing
+#
+# To add an industry:
+#   1. Append under `industries:` below with a short description
+#   2. Once config/capabilities.yaml (B2) lands, map its stage_defaults
+#   3. No schema bump needed — DomainManifest.industry is a free-form Optional[str]
+
+industries:
+  aws-ops:
+    description: AWS-centric operations — incident response, cloud automation, SRE
+    typical_stages: [Triage, Investigate, Execute, Respond, Summarize]
+    typical_packs: [cloud/aws, cloud/aws_advanced, observability/cloudwatch, observability/pagerduty]
+
+  k8s-ops:
+    description: Kubernetes-centric operations — cluster ops, deployments, incidents
+    typical_stages: [Triage, Investigate, Execute, Respond, Summarize]
+    typical_packs: [cloud/kubectl, observability/datadog]
+
+  backend-api:
+    description: Backend API development — REST/GraphQL services, data pipelines
+    typical_stages: [SpecAnalyzer, RefactorPlanner, CodeWriter, TestRunner, Reviewer]
+    typical_packs: [core/filesystem, core/search, core/shell]
+
+  frontend-web:
+    description: Frontend web applications — SPA, SSR, component libraries
+    typical_stages: [SpecAnalyzer, CodeWriter, TestRunner, Reviewer]
+    typical_packs: [core/filesystem, core/search, core/shell]
+
+  healthcare-triage:
+    description: Healthcare triage + compliance-aware workflows (PHI handling)
+    typical_stages: [Triage, Investigate, ComplianceChecker, Respond, Summarize]
+    typical_packs: [core/filesystem, services/confluence]
+
+  fintech-ops:
+    description: Fintech reconciliation, audit, regulated financial workflows
+    typical_stages: [Investigate, ComplianceChecker, Summarize, Report]
+    typical_packs: [core/filesystem, core/search]
+
+  generic:
+    description: Deliberately unspecified — skips industry-based stage_defaults
+    typical_stages: []
+    typical_packs: []

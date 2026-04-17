@@ -51,6 +51,35 @@ class ManifestLoader:
             warnings.warn(f"Domain manifest validation warning for {yaml_file}: {exc}", stacklevel=2)
         return data
 
+    @staticmethod
+    def load_industries(config_dir: str | Path | None = None) -> dict[str, dict[str, Any]]:
+        """Load the industry registry from config/industries.yaml.
+
+        Free-form industry strings on DomainManifest.industry are always allowed;
+        this registry is consumed by the capability map (B2) to resolve stage_defaults.
+
+        Args:
+            config_dir: directory containing industries.yaml. Defaults to shadow-gentcore's
+                        top-level config/ directory (project_root/config/).
+
+        Returns:
+            Dict of {industry_name: {description, typical_stages, typical_packs}}.
+            Empty dict if the file is missing — callers must not hard-depend on it.
+        """
+        if config_dir is None:
+            project_root = Path(__file__).resolve().parent.parent.parent
+            config_dir = project_root / "config"
+        registry_path = Path(config_dir) / "industries.yaml"
+        if not registry_path.exists():
+            return {}
+        try:
+            data = yaml.safe_load(registry_path.read_text(encoding="utf-8")) or {}
+        except Exception as exc:
+            logger.warning("Failed to parse industries.yaml at %s: %s", registry_path, exc)
+            return {}
+        industries = data.get("industries", {})
+        return industries if isinstance(industries, dict) else {}
+
     def load_agent(
         self,
         agent_path: str | Path,
