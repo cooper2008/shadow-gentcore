@@ -1,0 +1,48 @@
+# AWS-ops industry-specific capability bindings (B9 pilot)
+#
+# Overrides or extends the default stage_defaults from
+# config/capabilities.yaml when an AgentArchitectAgent v2 run has
+# domain.industry == "aws-ops". The architect merges these on top of
+# the shipped defaults.
+#
+# Schema mirrors stage_defaults: stage_name → [capability_name, ...]
+
+stage_overrides:
+  # Triage needs PagerDuty + CloudWatch, not just generic alerting
+  Triage:
+    - alerting           # observability/pagerduty
+    - observability      # observability/cloudwatch (AWS-native)
+    - knowledge_retrieval  # core/runbook_retrieval → aws-ops/runbooks/
+
+  # Investigate emphasises AWS-side log/metric correlation
+  Investigate:
+    - cloud_query        # cloud/aws + cloud/aws_advanced
+    - observability      # observability/cloudwatch
+    - log_analysis       # observability/cloudwatch (CloudWatch Logs Insights)
+    - knowledge_retrieval  # core/runbook_retrieval
+
+  # Execute is where aws-ops diverges sharply from SWE defaults — no
+  # shell_exec on plain shells; every command goes through cloud_control
+  # (AWS CLI via toolpack) or runbook_exec (documented procedure).
+  Execute:
+    - cloud_control      # cloud/aws_advanced + cloud/terraform
+    - runbook_exec       # core/runbook_retrieval + core/shell
+
+  # Summarize to Slack #inc-* + Jira ticket
+  Summarize:
+    - reporting          # services/slack + services/confluence
+    - ticketing          # services/jira + services/slack
+
+# Preferred toolpacks when multiple packs provide the same capability.
+# The architect picks from this list first; falls back to defaults
+# from config/capabilities.yaml if a preferred pack is unavailable.
+pack_preferences:
+  cloud_query: [cloud/aws_advanced, cloud/aws]
+  observability: [observability/cloudwatch]
+  alerting: [observability/pagerduty]
+  ticketing: [services/jira]
+
+metadata:
+  industry: aws-ops
+  authored_by: platform-team
+  pairs_with: workflow_incident_response.yaml

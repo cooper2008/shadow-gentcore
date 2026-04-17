@@ -1,0 +1,88 @@
+# AWS-ops Incident Response Workflow — B9 pilot
+#
+# Proves the audit's "Thin Stages + Rich Tools + Capability Map" thesis
+# end-to-end for a non-SWE domain without inventing ANY aws-specific
+# agents. Every step reuses a B1 generic stage; tool packs are resolved
+# via B2's capabilities.yaml.
+#
+# Prerequisites (this workflow activates when all merge):
+#   - fix/B1-generic-stages : the 6 Triage/Investigate/Execute/Respond/
+#                             Summarize/Retrieve stage agents
+#   - fix/B2-capability-map : config/capabilities.yaml + resolver
+#   - fix/B7-runbook-convention : core/runbook_retrieval toolpack
+#
+# Until prereqs merge, the golden-scenario test in
+# harness/tests/test_aws_ops_pilot.py skips with a clear reason; no
+# runtime harm.
+
+name: incident_response
+industry: aws-ops
+domain: aws-ops
+version: "1.0.0"
+description: >-
+  End-to-end incident response for AWS infrastructure. Triage alert →
+  investigate with cloud + observability + runbooks → execute remediation
+  (gated by human approval) → summarise to Slack + Jira.
+
+steps:
+  # Stage 1: Triage — classify the alert
+  - name: triage
+    agent: _shared/TriageAgent/v1
+    description: Classify alert severity + ownership; pull related signals
+    capabilities: [alerting, observability, knowledge_retrieval]
+    gate:
+      name: triage_pass
+      condition: "status == success"
+      on_fail: abort
+      max_retries: 0
+
+  # Stage 2: Investigate — gather evidence across cloud + logs + runbooks
+  - name: investigate
+    agent: _shared/InvestigateAgent/v1
+    description: Correlate CloudWatch metrics, logs, and runbook guidance
+    depends_on: [triage]
+    capabilities: [cloud_query, observability, log_analysis, knowledge_retrieval]
+    gate:
+      name: evidence_sufficient
+      condition: "has_output"
+      on_fail: retry
+      max_retries: 2
+
+  # Stage 3: Execute — run remediation (HUMAN APPROVAL REQUIRED)
+  - name: execute
+    agent: _shared/ExecuteAgent/v1
+    description: Execute documented remediation action from runbook
+    depends_on: [investigate]
+    capabilities: [cloud_control, runbook_exec]
+    gate:
+      type: approval
+      message: "Execute remediation action? Review the investigation summary before approving."
+
+  # Stage 4: Summarize — write up to Slack + open Jira ticket
+  - name: summarize
+    agent: _shared/SummarizeAgent/v1
+    description: Post incident summary to #inc-* channel and open a retrospective ticket
+    depends_on: [execute]
+    capabilities: [reporting, ticketing]
+    gate:
+      name: summary_complete
+      condition: "status == success"
+      on_fail: degrade
+
+feedback_loops:
+  # If the investigation turns up insufficient evidence, loop back with
+  # a feedback note — at most once to avoid thrash.
+  - from_step: investigate
+    to_step: triage
+    condition: "investigate.evidence_level == insufficient"
+    max_iterations: 1
+
+budget:
+  max_tokens: 200000
+  max_cost_usd: 5.0
+  timeout_minutes: 30
+
+metadata:
+  authored_by: platform-team
+  audit_proof: "B9 pilot — demonstrates B1 + B2 + B4 + B5 + B7 end-to-end"
+  composition_source: catalog-driven (0 bespoke agents synthesised)
