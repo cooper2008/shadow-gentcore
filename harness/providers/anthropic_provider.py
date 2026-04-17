@@ -44,10 +44,18 @@ class AnthropicProvider(BaseProvider):
     async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
         """Send a chat completion to Anthropic Claude.
 
-        When ``output_schema`` kwarg is provided and no ``tools`` are already set,
-        injects a ``submit_output`` tool with the schema as its input_schema and
-        forces the model to call it via ``tool_choice``. This guarantees the
-        response is schema-compliant JSON extracted from the tool input block.
+        ``output_schema`` behaviour (H1 — always-on submit_output):
+
+          * schema + no tools  → forced-submit_output mode. Inject
+            ``submit_output`` as the only tool with ``tool_choice`` forcing it.
+            The model MUST return schema-compliant JSON.
+          * schema + tools     → coexist mode. Inject ``submit_output``
+            alongside the agent's declared tools with ``tool_choice="auto"``.
+            The model can keep using tools OR finalise via submit_output. When
+            it calls submit_output, we convert that to structured ``content``
+            and suppress the call from ``tool_calls`` so the strategy sees a
+            clean completion signal (empty tool_calls + JSON content).
+          * no schema          → passthrough (tools if given, else no tools).
         """
         client = self._get_client()
         model = kwargs.pop("model", self._model)
@@ -72,16 +80,26 @@ class AnthropicProvider(BaseProvider):
         if system:
             create_kwargs["system"] = system
 
-        # Structured output: use submit_output tool trick when schema given and no
-        # existing tools (we don't want to override tool-calling in ReAct loop)
-        structured_output_mode = output_schema is not None and tools is None
-        if structured_output_mode:
-            create_kwargs["tools"] = [{
-                "name": "submit_output",
-                "description": "Submit the final structured output matching the required schema.",
-                "input_schema": output_schema,
-            }]
+        # submit_output tool definition — reused by both forced + coexist paths.
+        submit_output_tool = {
+            "name": "submit_output",
+            "description": (
+                "Submit the final structured output matching the required schema. "
+                "Call this when you have gathered enough information to answer — "
+                "it signals completion and returns your answer to the caller."
+            ),
+            "input_schema": output_schema or {"type": "object", "properties": {}},
+        }
+
+        forced_submit_output = output_schema is not None and tools is None
+        coexist_submit_output = output_schema is not None and tools is not None
+
+        if forced_submit_output:
+            create_kwargs["tools"] = [submit_output_tool]
             create_kwargs["tool_choice"] = {"type": "tool", "name": "submit_output"}
+        elif coexist_submit_output:
+            create_kwargs["tools"] = [*tools, submit_output_tool]
+            # Intentionally no tool_choice override — Anthropic defaults to "auto".
         elif tools:
             create_kwargs["tools"] = tools
 
@@ -91,15 +109,19 @@ class AnthropicProvider(BaseProvider):
 
         # Parse response
         content = ""
-        tool_calls = []
+        tool_calls: list[dict[str, Any]] = []
+        submit_output_fired = False
         for block in response.content:
             if hasattr(block, "text"):
                 content += block.text
             elif hasattr(block, "type") and block.type == "tool_use":
-                if structured_output_mode and block.name == "submit_output":
-                    # Extract structured output as JSON string
+                if (forced_submit_output or coexist_submit_output) and block.name == "submit_output":
+                    # Structured completion: overwrite content with JSON and
+                    # drop any sibling tool_calls so the strategy sees a
+                    # clean "done" signal.
                     import json
                     content = json.dumps(block.input)
+                    submit_output_fired = True
                 else:
                     tool_calls.append({
                         "id": block.id,
@@ -107,13 +129,16 @@ class AnthropicProvider(BaseProvider):
                         "arguments": block.input,
                     })
 
+        if submit_output_fired:
+            tool_calls = []
+
         return LLMResponse(
             content=content,
             tokens_used=response.usage.input_tokens + response.usage.output_tokens,
             tool_calls=tool_calls,
             model=model,
             stop_reason=response.stop_reason,
-            raw={"id": response.id},
+            raw={"id": response.id, "submit_output_fired": submit_output_fired},
         )
 
     async def stream(self, messages: list[dict[str, Any]], **kwargs: Any) -> AsyncIterator[LLMChunk]:
