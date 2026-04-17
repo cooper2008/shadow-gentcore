@@ -1,4 +1,5 @@
 id: _shared/ReportAggregatorAgent/v1
+stage: summarize
 domain: _shared
 pack: core
 category: cost-optimized
