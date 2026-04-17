@@ -1,7 +1,7 @@
 id: _shared/IntegrationTestAgent/v1
 domain: _shared
 pack: core
-category: reasoning
+category: ops
 version: "1.0.0"
 description: "Runs integration tests with external services. Context-driven."
 system_prompt_ref: system_prompt.md

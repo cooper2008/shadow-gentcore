@@ -1,7 +1,7 @@
 id: _shared/LinterAgent/v1
 domain: _shared
 pack: core
-category: reasoning
+category: ops
 version: "1.0.0"
 description: "Runs linters and type checkers. Context-driven — uses ruff, eslint, mypy, tsc, etc."
 system_prompt_ref: system_prompt.md

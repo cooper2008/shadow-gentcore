@@ -1,7 +1,7 @@
 id: _shared/RollbackAgent/v1
 domain: _shared
 pack: core
-category: reasoning
+category: ops
 version: "1.0.0"
 description: "Rolls back deployments and migrations safely. Context-driven."
 system_prompt_ref: system_prompt.md

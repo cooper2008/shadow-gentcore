@@ -42,3 +42,26 @@ categories:
     max_tokens: 4096
     thinking:
       enabled: false
+
+  ops:
+    # Shell-executing execution-stage agents (Deploy, Rollback, TestRunner,
+    # Linter, IntegrationTest, PerformanceTest, DependencyAnalyzer, SecurityScan).
+    # Low temperature — real commands need predictability.
+    provider: anthropic
+    model: claude-sonnet-4-6-20250414
+    temperature: 0.1
+    max_tokens: 4096
+    thinking:
+      enabled: false
+
+  compliance:
+    # Audit / policy / compliance review agents (read-only, no shell).
+    # Distinct from security-analysis: permissible network reads, varied
+    # output formats (markdown tables, audit reports), deterministic judgement.
+    provider: anthropic
+    model: claude-sonnet-4-6-20250414
+    temperature: 0.1
+    max_tokens: 4096
+    thinking:
+      enabled: true
+      budget_tokens: 8000
