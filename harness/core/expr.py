@@ -340,26 +340,29 @@ def _compare(left: Any, op: str, right: Any) -> bool:
         rs = "none" if right is None else str(right).lower()
         return (ls == rs) if op == "==" else (ls != rs)
 
+    _NUMERIC_OPS = {
+        "==": lambda a, b: a == b,
+        "!=": lambda a, b: a != b,
+        ">=": lambda a, b: a >= b,
+        "<=": lambda a, b: a <= b,
+        ">": lambda a, b: a > b,
+        "<": lambda a, b: a < b,
+    }
+
     try:
         ln = float(left)  # type: ignore[arg-type]
         rn = float(right)  # type: ignore[arg-type]
-        if op == "==": return ln == rn
-        if op == "!=": return ln != rn
-        if op == ">=": return ln >= rn
-        if op == "<=": return ln <= rn
-        if op == ">":  return ln > rn
-        if op == "<":  return ln < rn
+        fn = _NUMERIC_OPS.get(op)
+        if fn is not None:
+            return fn(ln, rn)
     except (TypeError, ValueError):
         pass
 
     ls = str(left).lower()
     rs = str(right).lower()
-    if op == "==": return ls == rs
-    if op == "!=": return ls != rs
-    if op == ">=": return ls >= rs
-    if op == "<=": return ls <= rs
-    if op == ">":  return ls > rs
-    if op == "<":  return ls < rs
+    fn = _NUMERIC_OPS.get(op)
+    if fn is not None:
+        return fn(ls, rs)
     return False
 
 
