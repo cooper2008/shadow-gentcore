@@ -261,6 +261,19 @@ class AgentRunner:
                 build_rule_context_from_manifest(manifest)
             )
 
+        # G6 — targeted-files allowlist. When the task carries a
+        # `targeted_files` list (surfaced by an upstream QualityGate for a
+        # Builder retry), restrict file_write/file_edit to those paths so
+        # the retry only rewrites the files the gate flagged. Cleared in
+        # finally so one retry's allowlist doesn't leak into later steps.
+        _targeted_files_active = False
+        if self.tool_executor is not None and hasattr(self.tool_executor, "set_targeted_files"):
+            _task_input = self._get(task, "input_payload", task if isinstance(task, dict) else {})
+            _targeted = _task_input.get("targeted_files") if isinstance(_task_input, dict) else None
+            if _targeted:
+                self.tool_executor.set_targeted_files(list(_targeted))
+                _targeted_files_active = True
+
         # Execute
         try:
             _set_state(AgentState.RUNNING, agent_id)
@@ -412,6 +425,10 @@ class AgentRunner:
             # don't leak into the next agent sharing the same ToolExecutor.
             if _rule_enforcement_active and self.tool_executor is not None:
                 self.tool_executor.set_rule_context(None)
+            # G6: always clear the targeted-files allowlist so one retry's
+            # file scope doesn't carry over to the next agent.
+            if _targeted_files_active and self.tool_executor is not None:
+                self.tool_executor.set_targeted_files(None)
 
     async def run_with_reflexion(
         self,

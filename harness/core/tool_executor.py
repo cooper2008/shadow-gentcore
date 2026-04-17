@@ -25,6 +25,11 @@ class ToolExecutor:
         self._execution_log: list[dict[str, Any]] = []
         self._rule_engine = rule_engine
         self._rule_context: Any = None  # Set by CompositionEngine per-step
+        # G6 — FRAMEWORK_AUDIT_2026Q2: targeted-file allowlist for Builder
+        # retries. When set (non-None), file_write/file_edit tool calls
+        # MUST target a path inside this list; others are denied. Unset
+        # (None) = no enforcement (backward compat).
+        self._targeted_files: list[str] | None = None
 
     def register_adapter(self, tool_id: str, adapter: Any) -> None:
         """Register a tool adapter for a specific tool_id."""
@@ -33,6 +38,21 @@ class ToolExecutor:
     def set_rule_context(self, context: Any) -> None:
         """Set the rule context for subsequent tool calls (agent permissions, etc.)."""
         self._rule_context = context
+
+    def set_targeted_files(self, paths: list[str] | None) -> None:
+        """Restrict file_write/file_edit tool calls to the given path allowlist.
+
+        Called by AgentRunner before a retry step when the upstream QualityGate
+        surfaced a list of files that need fixing. Passing None (or not calling
+        this at all) disables enforcement — the default backward-compatible
+        behaviour.
+
+        Args:
+            paths: list of file paths the retry step is allowed to write. Paths
+                are compared exact-match against the tool call's `path` argument.
+                Callers should normalise (e.g. strip leading `./`) before passing.
+        """
+        self._targeted_files = list(paths) if paths else None
 
     async def execute(self, tool_call: dict[str, Any]) -> dict[str, Any]:
         """Execute a single tool call and return normalized output.
@@ -61,6 +81,34 @@ class ToolExecutor:
                     "duration_ms": 0,
                     "blocked_by_rule": True,
                     "rule_layer": decision.rule_layer,
+                }
+                self._execution_log.append(blocked_result)
+                return blocked_result
+
+        # G6 — targeted-files allowlist for Builder retries.
+        # Enforced only when set_targeted_files() was called with a non-None
+        # list. file_write / file_edit tool calls must target a path in the
+        # allowlist; anything else is denied with a clear reason.
+        if self._targeted_files is not None and tool_name in ("file_write", "file_edit"):
+            requested_path = str(arguments.get("path", "")).strip()
+            # Normalise leading "./" for comparison (agents sometimes emit it)
+            normalised = requested_path[2:] if requested_path.startswith("./") else requested_path
+            allowlist_normalised = {
+                p[2:] if p.startswith("./") else p for p in self._targeted_files
+            }
+            if normalised not in allowlist_normalised:
+                blocked_result = {
+                    "tool_id": tool_id,
+                    "tool_name": tool_name,
+                    "output": (
+                        f"Blocked by targeted-files allowlist: path {requested_path!r} "
+                        f"is outside the retry's allowlist ({sorted(self._targeted_files)}). "
+                        "Retry steps may only rewrite the specific files flagged by the "
+                        "upstream gate."
+                    ),
+                    "success": False,
+                    "duration_ms": 0,
+                    "blocked_by_targeted_files": True,
                 }
                 self._execution_log.append(blocked_result)
                 return blocked_result
