@@ -1,0 +1,159 @@
+# Capability Map (B2)
+#
+# Declarative map: capability -> [toolpack uris] and stage -> [capabilities].
+#
+# Consumed by:
+#   - CapabilityResolver (harness/core/capability_resolver.py)
+#   - AgentArchitect v2 (B5 in Phase 2d) for catalog-driven workflow composition
+#   - Future runner integration (probably in Phase 2d/2e) to merge resolved
+#     packs into each step's manifest.tools at execute_dag time
+#
+# Today (B2): config + loader only. No runtime wiring — domains without
+# `industry:` skip capability resolution entirely. Existing behaviour is
+# unchanged.
+#
+# Schema:
+#   capabilities:
+#     <capability_name>:
+#       packs: [<toolpack_uri>, ...]
+#       description: <one-line>
+#   stage_defaults:
+#     <StageName>: [<capability_name>, ...]
+#
+# Conventions:
+#   - capability names: snake_case verbs/nouns describing what an agent does
+#   - toolpack URIs: `<category>/<pack>` form matches files in
+#     agent-tools/src/agent_tools/packs/<category>/<pack>.yaml
+#   - stage names match the existing 20 _shared/ agents (master) AND the 6
+#     new B1 stages (Triage/Investigate/Execute/Respond/Summarize/Retrieve)
+#     even though B1 lives on a separate branch — this lets B2 land
+#     independently and B1's stages resolve once both merge.
+
+capabilities:
+  # --- cloud + infra ---
+  cloud_query:
+    packs: [cloud/aws, cloud/aws_advanced, cloud/kubectl]
+    description: Read cloud resource state (describe, list, get)
+  cloud_control:
+    packs: [cloud/aws_advanced, cloud/terraform]
+    description: Mutate cloud state (create, update, delete, scale)
+  container_orchestration:
+    packs: [cloud/kubectl]
+    description: Kubernetes pod/deployment/service operations
+
+  # --- observability + alerting ---
+  observability:
+    packs: [observability/cloudwatch, observability/datadog]
+    description: Metrics + dashboards for system health
+  log_analysis:
+    packs: [observability/cloudwatch, observability/datadog]
+    description: Search and filter application/system logs
+  alerting:
+    packs: [observability/pagerduty]
+    description: Page on-call, manage incidents, acknowledge alerts
+
+  # --- knowledge + retrieval ---
+  knowledge_retrieval:
+    packs: [core/runbook_retrieval, services/confluence]
+    description: RAG over runbooks, wikis, internal docs
+  runbook_exec:
+    packs: [core/runbook_retrieval, core/shell]
+    description: Execute documented procedures step-by-step
+
+  # --- collaboration + comms ---
+  ticketing:
+    packs: [services/jira, services/slack, pm/linear, pm/shortcut, pm/notion]
+    description: Create/update tickets, post status, assign owners
+  notification:
+    packs: [services/slack]
+    description: One-shot announcement to a channel/person
+  reporting:
+    packs: [services/slack, services/confluence]
+    description: Aggregate findings into a summary artifact
+
+  # --- code workflows ---
+  code_read:
+    packs: [core/filesystem, core/search]
+    description: Read source files, grep, list directory
+  code_write:
+    packs: [core/filesystem]
+    description: Edit/create source files (subject to permission engine)
+  shell_exec:
+    packs: [core/shell]
+    description: Run shell commands (subject to permission engine)
+  source_control:
+    packs: [services/github, services/github_workflow, github_pr]
+    description: Branches, PRs, reviews, CI workflow ops
+
+  # --- analysis + quality ---
+  static_analysis:
+    packs: [analysis/sonarqube, analysis/codecov]
+    description: Lint, complexity, coverage, code smells
+  vulnerability_scan:
+    packs: [analysis/snyk]
+    description: Scan dependencies/images for CVEs
+
+  # --- documentation ---
+  api_docs_generation:
+    packs: [docs/swagger, docs/typedoc, docs/sphinx, docs/mkdocs]
+    description: Generate or refresh API/SDK documentation
+
+  # --- frontend ---
+  ui_test:
+    packs: [frontend/playwright, browser]
+    description: Browser-driven UI tests + visual checks
+  ui_build:
+    packs: [frontend/vite, frontend/storybook]
+    description: Bundle, dev-server, story rendering
+
+  # --- backend builds ---
+  python_build:
+    packs: [python_build, python_advanced]
+    description: pytest, ruff, mypy, package, publish
+  typescript_build:
+    packs: [typescript_advanced]
+    description: tsc, jest, eslint, package, publish
+  generic_build:
+    packs: [build_core, java_build, go_build]
+    description: Multi-language build/test invocation
+
+  # --- web research ---
+  web_search:
+    packs: [websearch]
+    description: External web search for fresh info / docs
+
+
+# Stage -> typical capabilities. Used by AgentArchitect v2 (B5) and the
+# capability map's resolve_packs_for_stage() helper. Stages without an
+# entry resolve to an empty capability list (no auto-bound packs).
+
+stage_defaults:
+  # ---- 6 new generic stages from B1 (will resolve once that branch merges) ----
+  Triage:       [alerting, observability, knowledge_retrieval]
+  Investigate:  [cloud_query, observability, log_analysis, knowledge_retrieval]
+  Execute:      [cloud_control, runbook_exec, shell_exec]
+  Respond:      [alerting, ticketing, notification]
+  Summarize:    [reporting, ticketing, knowledge_retrieval]
+  Retrieve:     [knowledge_retrieval]
+
+  # ---- 20 existing _shared/ stages (currently shipped on master) ----
+  SpecAnalyzer:        [code_read, knowledge_retrieval]
+  RefactorPlanner:     [code_read]
+  CodeWriter:          [code_read, code_write]
+  Migration:           [code_read, code_write, shell_exec]
+  TestRunner:          [shell_exec, code_read]
+  Linter:              [shell_exec, static_analysis, code_read]
+  SecurityScan:        [vulnerability_scan, code_read]
+  IntegrationTest:     [shell_exec, code_read]
+  PerformanceTest:     [shell_exec, observability]
+  DependencyAnalyzer:  [shell_exec, vulnerability_scan, code_read]
+  Reviewer:            [code_read, static_analysis]
+  ComplianceChecker:   [code_read, knowledge_retrieval]
+  Deploy:              [cloud_control, shell_exec, source_control]
+  Rollback:            [cloud_control, shell_exec, alerting]
+  EnvironmentValidator: [cloud_query, observability, shell_exec]
+  DocGenerator:        [code_read, code_write, api_docs_generation]
+  Changelog:           [code_read, source_control]
+  Notifier:            [notification]
+  Ticket:              [ticketing]
+  ReportAggregator:    [reporting, observability, knowledge_retrieval]
