@@ -87,6 +87,11 @@ class CompositionEngine:
         self._execution_log: list[dict[str, Any]] = []
         self._feedback_loops: list[Any] = []
         self._state_store: WorkflowStateStore = state_store or InMemoryStateStore()
+        # G7 — per-step observability. Aggregates retries, tokens, cost,
+        # wall-clock duration per step name for CLI printers and reports.
+        # Accessible via get_step_metrics(step_name) or get_step_metrics()
+        # for the full map.
+        self._step_metrics: dict[str, dict[str, Any]] = {}
 
     def register_feedback_loop(self, loop: Any) -> None:
         """Register a FeedbackLoop for cross-stage feedback."""
@@ -184,6 +189,12 @@ class CompositionEngine:
         high-priority context items so the LLM always sees what earlier
         agents produced.
         """
+        # G7 — per-step observability. Timing captures dep-context assembly,
+        # LLM call, validator work, and gate checks. Metrics written here are
+        # consumed by _run_dag_step's STEP_COMPLETED event and by any caller
+        # using get_step_metrics() directly.
+        _step_start_monotonic = time.monotonic()
+
         # Auto-inject dependency results into context so the agent sees them
         dep_context: list[dict[str, Any]] = []
         for dep_name, dep_result in dep_artifacts.items():
@@ -259,15 +270,18 @@ class CompositionEngine:
 
             result["_artifact"] = artifact
             result["_confidence"] = artifact.confidence
+            self._record_step_observability(step_name, result, _step_start_monotonic)
             return result
         # Stub: return a placeholder result
-        return {
+        stub_result = {
             "step": step_name,
             "agent": agent_id,
             "status": "completed",
             "output": config.get("mock_output", f"Output from {step_name}"),
             "dependencies": dep_artifacts,
         }
+        self._record_step_observability(step_name, stub_result, _step_start_monotonic)
+        return stub_result
 
     async def _check_gate(
         self,
@@ -411,6 +425,7 @@ class CompositionEngine:
         # ── STRATEGY: retry (with feedback, keep context) ──
         if on_fail == "retry" and max_retries > 0:
             for attempt in range(1, max_retries + 1):
+                self._bump_step_metric(step_name, "retry_count", 1)  # G7 observability
                 self._execution_log.append({
                     "event": ExecutionEvent.GATE_RETRY,
                     "gate": gate_name,
@@ -618,6 +633,55 @@ class CompositionEngine:
         """Reset engine state for a new workflow execution."""
         self._step_results.clear()
         self._execution_log.clear()
+        self._step_metrics.clear()
+
+    # ── G7: per-step observability ───────────────────────────────────────
+
+    def _record_step_observability(self, step_name: str, result: dict[str, Any], start_monotonic: float) -> None:
+        """G7 — capture wall-clock + token + cost for a step after _execute_step runs.
+
+        Called from _execute_step's return paths; surfaced on STEP_COMPLETED
+        events and exposed via get_step_metrics(). Retry count is incremented
+        separately by _check_gate's retry path.
+        """
+        duration_ms = int((time.monotonic() - start_monotonic) * 1000)
+        self._bump_step_metric(step_name, "duration_ms", duration_ms)
+        if isinstance(result, dict):
+            tokens = int(result.get("tokens_used", 0) or 0)
+            cost = float(result.get("cost_usd", 0.0) or 0.0)
+            if tokens:
+                self._bump_step_metric(step_name, "tokens_used", tokens)
+            if cost:
+                self._bump_step_metric(step_name, "cost_usd", cost)
+
+    def _bump_step_metric(self, step_name: str, key: str, delta: Any = 1) -> None:
+        """Increment (or overwrite, for non-numeric values) a metric for a step."""
+        slot = self._step_metrics.setdefault(step_name, {
+            "retry_count": 0,
+            "tokens_used": 0,
+            "cost_usd": 0.0,
+            "duration_ms": 0,
+        })
+        if isinstance(delta, (int, float)) and isinstance(slot.get(key, 0), (int, float)):
+            slot[key] = slot.get(key, 0) + delta
+        else:
+            slot[key] = delta
+
+    def get_step_metrics(self, step_name: str | None = None) -> dict[str, Any]:
+        """Return metrics for one step or all steps.
+
+        Args:
+            step_name: optional. When provided, returns the dict for that step
+                (empty dict if the step hasn't run). When None, returns a copy
+                of the full {step_name: metrics_dict} map.
+
+        Returns:
+            Per-step metrics with keys: retry_count, tokens_used, cost_usd,
+            duration_ms. Missing keys default to 0.
+        """
+        if step_name is not None:
+            return dict(self._step_metrics.get(step_name, {}))
+        return {k: dict(v) for k, v in self._step_metrics.items()}
 
     # ── DAG Execution ─────────────────────────────────────────────────────
 
@@ -775,6 +839,9 @@ class CompositionEngine:
         step_configs = step_configs or {}
         step_map = step_map or {}
         agent_id = step.get("agent", "")
+        # G7 — timing is handled inside _execute_step itself so direct
+        # callers of that method also get metrics. This wrapper only
+        # emits the STEP_COMPLETED event enriched from _step_metrics.
         result = await self._execute_step(step_name, agent_id, config, dep_artifacts)
         self._step_results[step_name] = result
 
@@ -797,10 +864,19 @@ class CompositionEngine:
             if not gate_passed:
                 raise GateFailure(f"Gate failed for {step_name}")
 
+        # G7 — read metrics already written by _execute_step and surface
+        # them on the STEP_COMPLETED event so downstream consumers (CLI
+        # printers, RunRecord aggregators) get retries, tokens, cost, and
+        # wall-clock duration per step without re-parsing logs.
+        _metrics = self._step_metrics.get(step_name, {})
         self._execution_log.append({
             "event": ExecutionEvent.STEP_COMPLETED,
             "step": step_name,
             "status": "success",
+            "retry_count": _metrics.get("retry_count", 0),
+            "tokens_used": _metrics.get("tokens_used", 0),
+            "cost_usd": _metrics.get("cost_usd", 0.0),
+            "duration_ms": _metrics.get("duration_ms", 0),
         })
         return result
 
