@@ -54,3 +54,112 @@ servers:
   #       description: "Read a file"
   #     - name: write_file
   #       description: "Write a file"
+
+  # ── Ops-oriented MCP servers (B6 — FRAMEWORK_AUDIT_2026Q2) ─────────────────
+  # These templates enable capability-map-driven tool binding (B2) for
+  # incident response, observability, and infrastructure domains.
+  # Uncomment any server you want to enable, then: ./ai mcp list
+
+  # - name: aws
+  #   command: "npx -y @aws/mcp-server"
+  #   transport: stdio
+  #   env:
+  #     AWS_PROFILE: "${AWS_PROFILE}"
+  #     AWS_REGION: "${AWS_REGION:-us-east-1}"
+  #   description: "AWS API — describe/query EC2, RDS, Lambda, S3, IAM, CloudWatch via MCP"
+  #   provides: [cloud_query, cloud_control, observability]
+  #   requires_env: [AWS_PROFILE]
+  #   tools:
+  #     - name: aws_describe_instance
+  #       description: "Describe an EC2/RDS/Lambda resource by ID"
+  #     - name: aws_query_metrics
+  #       description: "Query CloudWatch metrics"
+  #     - name: aws_get_logs
+  #       description: "Fetch CloudWatch Logs for a log group + time window"
+
+  # - name: k8s
+  #   command: "npx -y @kubernetes/mcp-server"
+  #   transport: stdio
+  #   env:
+  #     KUBECONFIG: "${KUBECONFIG}"
+  #   description: "Kubernetes cluster control — get/describe/logs/rollout via MCP"
+  #   provides: [cloud_query, cloud_control]
+  #   requires_env: [KUBECONFIG]
+  #   tools:
+  #     - name: k8s_get_pods
+  #       description: "List pods in a namespace"
+  #     - name: k8s_describe
+  #       description: "Describe any k8s resource"
+  #     - name: k8s_logs
+  #       description: "Fetch pod logs"
+  #     - name: k8s_rollout_status
+  #       description: "Query rollout status for a deployment"
+
+  # - name: datadog
+  #   command: "npx -y @datadog/mcp-server"
+  #   transport: stdio
+  #   env:
+  #     DD_API_KEY: "${DD_API_KEY}"
+  #     DD_APP_KEY: "${DD_APP_KEY}"
+  #   description: "Datadog metrics, logs, monitors, and events via MCP"
+  #   provides: [observability, log_analysis, metric_query]
+  #   requires_env: [DD_API_KEY, DD_APP_KEY]
+  #   tools:
+  #     - name: dd_query_metrics
+  #       description: "Query Datadog metrics"
+  #     - name: dd_search_logs
+  #       description: "Search Datadog logs"
+  #     - name: dd_list_monitors
+  #       description: "List monitors + their state"
+
+  # - name: sentry
+  #   command: "npx -y @sentry/mcp-server"
+  #   transport: stdio
+  #   env:
+  #     SENTRY_AUTH_TOKEN: "${SENTRY_AUTH_TOKEN}"
+  #     SENTRY_ORG: "${SENTRY_ORG}"
+  #   description: "Sentry error tracking — list issues, events, releases via MCP"
+  #   provides: [observability, error_tracking]
+  #   requires_env: [SENTRY_AUTH_TOKEN, SENTRY_ORG]
+  #   tools:
+  #     - name: sentry_list_issues
+  #       description: "List recent issues for a project"
+  #     - name: sentry_get_event
+  #       description: "Get detailed event by ID"
+  #     - name: sentry_resolve_issue
+  #       description: "Resolve an issue"
+
+  # - name: opsgenie
+  #   command: "npx -y @opsgenie/mcp-server"
+  #   transport: stdio
+  #   env:
+  #     OPSGENIE_API_KEY: "${OPSGENIE_API_KEY}"
+  #   description: "Opsgenie alerting + on-call rotation management via MCP"
+  #   provides: [alerting, incident_management]
+  #   requires_env: [OPSGENIE_API_KEY]
+  #   tools:
+  #     - name: opsgenie_create_alert
+  #       description: "Create an alert"
+  #     - name: opsgenie_list_alerts
+  #       description: "List open alerts"
+  #     - name: opsgenie_ack_alert
+  #       description: "Acknowledge an alert"
+  #     - name: opsgenie_who_is_on_call
+  #       description: "Find who is currently on-call"
+
+  # - name: grafana
+  #   command: "npx -y @grafana/mcp-server"
+  #   transport: stdio
+  #   env:
+  #     GRAFANA_URL: "${GRAFANA_URL}"
+  #     GRAFANA_API_TOKEN: "${GRAFANA_API_TOKEN}"
+  #   description: "Grafana dashboards + Loki logs + Prometheus metrics via MCP"
+  #   provides: [observability, log_analysis, metric_query]
+  #   requires_env: [GRAFANA_URL, GRAFANA_API_TOKEN]
+  #   tools:
+  #     - name: grafana_query_prometheus
+  #       description: "Run a PromQL query"
+  #     - name: grafana_query_loki
+  #       description: "Run a LogQL query"
+  #     - name: grafana_get_dashboard
+  #       description: "Fetch a dashboard by UID"
