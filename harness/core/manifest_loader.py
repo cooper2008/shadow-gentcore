@@ -24,9 +24,13 @@ logger = logging.getLogger(__name__)
 class ManifestLoader:
     """Loads YAML manifests and wires the framework into a runnable engine."""
 
-    def __init__(self, packs_root: str | Path | None = None) -> None:
+    def __init__(self, packs_root: str | Path | None = None, registry: Any = None) -> None:
         # Optional override for tool pack YAML directory
         self._packs_root = Path(packs_root) if packs_root else None
+        # H-REG: Optional shared AgentRegistry. When provided, build_step_configs
+        # uses it to resolve agent directories in O(1) instead of scanning the
+        # filesystem per step. Auto-created in boot_engine when omitted.
+        self._registry = registry
 
     # ------------------------------------------------------------------
     # Public API
@@ -161,34 +165,25 @@ class ManifestLoader:
 
         steps = workflow.get("steps", [])
 
+        # H-REG: lazy-create a registry when the loader wasn't given one.
+        # Shared registries (passed via constructor) benefit from previous
+        # scans + path caches; loader-local ones still use the resolver
+        # fallback chain, which subsumes the legacy 3-path logic.
+        if self._registry is None:
+            from harness.core.agent_registry import AgentRegistry
+            self._registry = AgentRegistry()
+
+        project_root = Path(__file__).resolve().parent.parent.parent
+
         for step in steps:
             # Support both "name" and "id" keys (domain agents use "id")
             step_name = step.get("name") or step.get("id", "")
             agent_id = step.get("agent", "")
 
-            # Locate agent directory from agent_id (e.g. "backend_fastapi/FastAPICodeGenAgent/v1")
-            parts = agent_id.split("/")
-            agent_dir = domain_root / "agents" / agent_id  # fallback
-            project_root = Path(__file__).resolve().parent.parent.parent
-            if len(parts) >= 3:
-                agent_name = parts[1]
-                agent_version = parts[2]
-                # Try: domain_root/agents/<AgentName>/<version>/ (normal domain)
-                candidate = domain_root / "agents" / agent_name / agent_version
-                if candidate.exists():
-                    agent_dir = candidate
-                else:
-                    # Try: domain_root/agents/<domain>/<AgentName>/<version>/ (internal domains)
-                    candidate2 = domain_root / "agents" / parts[0] / agent_name / agent_version
-                    if candidate2.exists():
-                        agent_dir = candidate2
-                    else:
-                        # Try: project_root/agents/<domain>/<AgentName>/<version>/ (shared/internal agents)
-                        candidate3 = project_root / "agents" / parts[0] / agent_name / agent_version
-                        if candidate3.exists():
-                            agent_dir = candidate3
-            elif len(parts) == 2:
-                agent_dir = domain_root / "agents" / parts[0] / parts[1]
+            # H-REG: single-entry-point path resolution. Hits cache on
+            # subsequent lookups; falls back to the 3-path scan on first miss.
+            resolved = self._registry.resolve_path(agent_id, domain_root, project_root)
+            agent_dir = resolved if resolved else domain_root / "agents" / agent_id
 
             # Load agent if directory exists
             manifest: dict[str, Any] = {}
