@@ -149,8 +149,10 @@ class TestHotReload:
             d = engine.check_tool_call("shell_exec", {"command": "echo hi"})
             assert d.allowed
 
-            # Change the file to deny shell_command
-            time.sleep(0.05)  # ensure mtime changes
+            # Change the file to deny shell_command. Sleep longer than the
+            # H5 hot-reload debounce window so the next check actually stats
+            # the file and picks up the new rules.
+            time.sleep((RuleEngine.HOT_RELOAD_DEBOUNCE_MS / 1000.0) + 0.1)
             Path(f.name).write_text(yaml.dump({
                 "platform": {"blocked_commands": []},
                 "defaults": {"shell_command": "deny"},
