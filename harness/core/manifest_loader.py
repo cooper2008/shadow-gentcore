@@ -12,6 +12,7 @@ Responsibilities:
 from __future__ import annotations
 
 import logging
+import os
 import warnings
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,49 @@ from typing import Any
 import yaml
 
 logger = logging.getLogger(__name__)
+
+
+# B5 — Architect v2 feature flag (audit §8 Phase 2d).
+# When GENTCORE_ARCHITECT_V2 is truthy, load_workflow rewrites any workflow
+# step referencing `_genesis/AgentArchitectAgent/v1` to the v2 catalog-driven
+# agent. Flag off = zero behaviour change; v1 remains the default until
+# domain owners opt in via env var or CLI flag.
+_ARCHITECT_V2_ENV = "GENTCORE_ARCHITECT_V2"
+_ARCHITECT_V1_ID = "_genesis/AgentArchitectAgent/v1"
+_ARCHITECT_V2_ID = "_genesis/AgentArchitectAgent/v2"
+
+
+def _architect_v2_enabled() -> bool:
+    raw = os.environ.get(_ARCHITECT_V2_ENV, "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def _swap_architect_v1_to_v2(workflow: dict[str, Any]) -> dict[str, Any]:
+    """Rewrite v1 Architect references to v2 when the feature flag is on.
+
+    Operates on a shallow copy of the steps list so callers holding the
+    original dict see the untouched version (defensive — the loader caches
+    could be picked up by unaware readers).
+    """
+    if not _architect_v2_enabled():
+        return workflow
+    steps = workflow.get("steps") or []
+    rewritten_any = False
+    new_steps: list[Any] = []
+    for step in steps:
+        if isinstance(step, dict) and step.get("agent") == _ARCHITECT_V1_ID:
+            new_step = {**step, "agent": _ARCHITECT_V2_ID}
+            new_steps.append(new_step)
+            rewritten_any = True
+        else:
+            new_steps.append(step)
+    if rewritten_any:
+        logger.info(
+            "GENTCORE_ARCHITECT_V2=1 → swapped AgentArchitectAgent/v1 → v2 in workflow %r",
+            workflow.get("name", "<unnamed>"),
+        )
+        return {**workflow, "steps": new_steps}
+    return workflow
 
 
 class ManifestLoader:
@@ -158,14 +202,20 @@ class ManifestLoader:
         return manifest, system_prompt, context_items
 
     def load_workflow(self, workflow_path: str | Path) -> dict[str, Any]:
-        """Load a workflow YAML file."""
+        """Load a workflow YAML file.
+
+        B5 — when GENTCORE_ARCHITECT_V2=1, rewrites _genesis/AgentArchitectAgent/v1
+        step references to v2 (catalog-driven architect). Rewrite happens
+        after validation so the raw YAML still validates against the
+        contract (both v1 and v2 are valid `agent` refs).
+        """
         data = self.load_yaml(workflow_path)
         try:
             from agent_contracts.manifests.workflow_def import WorkflowDefinition
             WorkflowDefinition.model_validate(data)
         except Exception as exc:
             warnings.warn(f"Workflow manifest validation warning for {workflow_path}: {exc}", stacklevel=2)
-        return data
+        return _swap_architect_v1_to_v2(data)
 
     def build_step_configs(
         self,
