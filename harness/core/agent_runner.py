@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import os
 import time
 from enum import Enum
 from typing import Any
@@ -11,6 +12,54 @@ from typing import Any
 _HOOK_TIMEOUT = 5  # seconds
 
 _hook_logger = logging.getLogger(__name__)
+
+
+# H3 — FRAMEWORK_AUDIT_2026Q2
+# When this env var is truthy (value in {"1", "true", "yes", "on"} — case-insensitive)
+# AgentRunner.run() populates ToolExecutor.set_rule_context() with a RuleContext
+# built from the agent manifest. This activates RuleEngine Layers 2–6 (category
+# overrides, domain policy, agent permissions, workflow/runtime overrides) which
+# were dead in production before H3.
+_ENFORCE_RULES_ENV = "GENTCORE_ENFORCE_RULES"
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _enforce_rules_enabled() -> bool:
+    return os.environ.get(_ENFORCE_RULES_ENV, "").strip().lower() in _TRUTHY
+
+
+def build_rule_context_from_manifest(manifest: Any) -> "RuleContext":  # noqa: F821 (forward ref)
+    """Build a RuleContext from an agent manifest.
+
+    Extracts ``category`` and ``permissions`` (the fields RuleEngine's Layers 2
+    and 4 consume). Domain policy, workflow overrides, and trusted_paths are
+    left empty for the caller to populate from workspace configuration when
+    available.
+
+    Accepts both dict manifests (YAML-loaded) and AgentManifest Pydantic objects.
+    """
+    from harness.core.rule_engine import RuleContext  # local import to avoid cycles
+
+    if isinstance(manifest, dict):
+        category = str(manifest.get("category", ""))
+        perms_obj = manifest.get("permissions") or {}
+        agent_perms = dict(perms_obj) if isinstance(perms_obj, dict) else {}
+    else:
+        category = str(getattr(manifest, "category", "") or "")
+        perms_obj = getattr(manifest, "permissions", None)
+        if perms_obj is None:
+            agent_perms = {}
+        elif hasattr(perms_obj, "model_dump"):
+            agent_perms = perms_obj.model_dump()
+        elif isinstance(perms_obj, dict):
+            agent_perms = dict(perms_obj)
+        else:
+            agent_perms = {}
+
+    return RuleContext(
+        agent_category=category,
+        agent_permissions=agent_perms,
+    )
 
 
 def _call_hook_safe(hook_fn: Any, *args: Any) -> Any:
@@ -197,6 +246,21 @@ class AgentRunner:
         strategy = self.mode_dispatcher.dispatch(execution_mode)
         _set_state(AgentState.READY, agent_id)
 
+        # H3: wire rule context onto the tool executor so RuleEngine Layers 2-6
+        # enforce against this agent's declared category + permissions. Gated by
+        # GENTCORE_ENFORCE_RULES=1 so pre-H3 behaviour remains the default until
+        # domain owners migrate their manifests. Cleared in the `finally` below
+        # so one agent's context doesn't leak into another sharing the executor.
+        _rule_enforcement_active = (
+            _enforce_rules_enabled()
+            and self.tool_executor is not None
+            and hasattr(self.tool_executor, "set_rule_context")
+        )
+        if _rule_enforcement_active:
+            self.tool_executor.set_rule_context(
+                build_rule_context_from_manifest(manifest)
+            )
+
         # Execute
         try:
             _set_state(AgentState.RUNNING, agent_id)
@@ -342,6 +406,12 @@ class AgentRunner:
                 "output": "",
                 "content": "",
             }
+
+        finally:
+            # H3: always clear the rule context so one agent's permissions
+            # don't leak into the next agent sharing the same ToolExecutor.
+            if _rule_enforcement_active and self.tool_executor is not None:
+                self.tool_executor.set_rule_context(None)
 
     async def run_with_reflexion(
         self,
