@@ -38,6 +38,11 @@ class PlanExecuteStrategy(ExecutionStrategy):
         chat_kwargs: dict[str, Any] = {}
         if api_tools:
             chat_kwargs["tools"] = api_tools
+        # H1 — pass output_schema to all phase-2 execute calls. Provider injects
+        # submit_output alongside declared tools (coexist mode) so the LLM can
+        # finalise early with structured output when the plan is complete.
+        if output_schema:
+            chat_kwargs["output_schema"] = output_schema
 
         # Phase 1: Planning
         plan_messages = list(messages)

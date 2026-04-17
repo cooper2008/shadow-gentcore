@@ -157,6 +157,12 @@ class ReActStrategy(ExecutionStrategy):
             if api_tools and not is_last_step:
                 chat_kwargs["tools"] = api_tools
 
+            # H1 — always pass output_schema when set. Provider injects
+            # submit_output alongside declared tools (coexist mode) so the
+            # LLM can signal completion with structured content at any step.
+            if output_schema:
+                chat_kwargs["output_schema"] = output_schema
+
             # Inject L1 hint as a system note on the first step only
             step_messages = current_messages
             if step_num == 0 and router is not None and router.has_l1_tools:
