@@ -1,0 +1,59 @@
+id: _shared/TriageAgent/v1
+stage: analyze
+domain: _shared
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Classifies and prioritises inbound signals (incidents, alerts, tickets, PRs, customer reports). Context-driven — same agent triages AWS incidents, Jira tickets, and GitHub PRs by switching standards + reference docs."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: chain_of_thought
+  fallback: react
+  max_react_steps: 6
+tools:
+  - name: file_read
+    description: "Read signal payload, historical context, SLO thresholds"
+    pack: "toolpack://core/filesystem"
+  - name: search_code
+    description: "Search standards.md and prior tickets for precedent classifications"
+    pack: "toolpack://core/search"
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+input_schema:
+  type: object
+  required: [signal]
+  properties:
+    signal:
+      type: object
+      description: "The inbound signal payload (alert, ticket, PR, incident report)"
+    signal_type:
+      type: string
+      description: "Kind of signal (e.g. pagerduty_incident, github_pr, jira_ticket, cloudwatch_alarm)"
+    sla_context:
+      type: object
+      description: "Optional SLA/SLO context used for prioritisation"
+output_schema:
+  type: object
+  required: [priority, classification, next_stage, summary]
+  properties:
+    priority:
+      type: string
+      enum: [p0, p1, p2, p3, p4]
+      description: "Urgency of the signal — NOT difficulty of resolution"
+    classification:
+      type: string
+      description: "Domain-specific category (e.g. infra_outage, perf_regression, security_vuln)"
+    next_stage:
+      type: string
+      enum: [investigate, execute, respond, summarize, close]
+    tags:
+      type: array
+      items: {type: string}
+    summary:
+      type: string
+metadata:
+  author: platform-team
+  tags: [shared, triage, generic, reusable]

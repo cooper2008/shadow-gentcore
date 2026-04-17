@@ -1,0 +1,69 @@
+id: _shared/ExecuteAgent/v1
+stage: execute
+domain: _shared
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Executes a named procedure, runbook, or playbook end-to-end with per-step confirmation. Captures rollback state before every destructive action. Context-driven — same agent executes AWS incident runbooks, K8s deployments, data-pipeline backfills."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: plan_execute
+  fallback: react
+  max_plan_steps: 10
+  max_react_steps: 12
+tools:
+  - name: shell_exec
+    description: "Execute runbook steps (approved commands only)"
+    pack: "toolpack://core/shell"
+  - name: file_read
+    description: "Read the runbook file and prior-step outputs"
+    pack: "toolpack://core/filesystem"
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: allow
+  network_access: deny
+input_schema:
+  type: object
+  required: [procedure]
+  properties:
+    procedure:
+      description: "Either a runbook file ref (path to markdown in context/runbooks/) or an inline list of steps"
+      oneOf:
+        - type: string
+        - type: array
+          items: {type: object}
+    target:
+      type: string
+      description: "Target resource/environment (e.g. 'rds:acme-prod-db-1' or 'ecs:orders-api/staging')"
+    dry_run:
+      type: boolean
+      default: true
+      description: "When true, print each step without executing. Default TRUE for safety."
+output_schema:
+  type: object
+  required: [execution_status, steps_completed, rollback_command, summary]
+  properties:
+    execution_status:
+      type: string
+      enum: [success, partial, failed, aborted, dry_run_complete]
+    steps_completed:
+      type: array
+      items:
+        type: object
+        properties:
+          step_id: {type: string}
+          command: {type: string}
+          exit_code: {type: integer}
+          output_excerpt: {type: string}
+    rollback_command:
+      type: string
+      description: "The command (or command list) that would reverse the executed actions"
+    halted_at_step:
+      type: string
+      description: "If execution_status != success, the step where execution halted"
+    summary:
+      type: string
+metadata:
+  author: platform-team
+  tags: [shared, execute, runbook, generic, reusable]
