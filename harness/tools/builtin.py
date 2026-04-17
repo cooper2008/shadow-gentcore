@@ -59,6 +59,53 @@ class BuiltinToolAdapter:
             return {"success": False, "stdout": "", "stderr": str(exc), "exit_code": -1, "command": cmd}
 
 
+class GenesisVerifierAdapter:
+    """Invokes the in-process `verify_genesis_output()` — no subprocess fork.
+
+    Replaces the previous QualityGateAgent pattern of shelling out to
+    `./ai validate`. The Python call path is faster, more deterministic, and
+    carries a tighter permission surface (no shell_command allow needed).
+
+    Arguments:
+        domain_dir (required) — path to the generated domain to verify
+
+    Returns (via standard adapter envelope):
+        success: True iff verification raised no exception (regardless of passed)
+        stdout: JSON-serialised verification report from genesis_verifier
+        exit_code: 0 on pass, 1 on failure, 2 on bad args
+    """
+
+    async def invoke(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        import json as _json
+
+        domain_dir = arguments.get("domain_dir", "")
+        if not domain_dir:
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": "Missing 'domain_dir' argument",
+                "exit_code": 2,
+            }
+
+        try:
+            from harness.core.genesis_verifier import verify_genesis_output
+
+            report = verify_genesis_output(domain_dir)
+            return {
+                "success": True,
+                "stdout": _json.dumps(report, default=str),
+                "stderr": "",
+                "exit_code": 0 if report.get("passed") else 1,
+            }
+        except Exception as exc:
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": f"verify_genesis_output error: {exc}",
+                "exit_code": 1,
+            }
+
+
 class FileWriteAdapter:
     """Writes content to a file (not a shell command — pure Python for safety)."""
 
@@ -440,6 +487,9 @@ BUILTIN_ADAPTERS: dict[str, Any] = {
     "next_dev": _make(lambda a: f"npx next dev -p {_q(str(a.get('port', 3000)))} 2>&1 &"),
     "cra_test": _make(lambda a: f"npx react-scripts test --watchAll=false {_q(a.get('args', ''))} 2>&1"),
     "react_scripts_build": _make(lambda a: "npx react-scripts build 2>&1"),
+
+    # ── Genesis verification (G5 — in-process, no shell) ──
+    "verify_genesis_output": GenesisVerifierAdapter(),
 }
 
 
