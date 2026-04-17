@@ -1,7 +1,7 @@
 id: _shared/DeployAgent/v1
 domain: _shared
 pack: core
-category: reasoning
+category: ops
 version: "1.0.0"
 description: "Executes deployments safely — plan first, dry-run, then deploy. Context-driven."
 system_prompt_ref: system_prompt.md

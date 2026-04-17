@@ -1,7 +1,7 @@
 id: _shared/SecurityScanAgent/v1
 domain: _shared
 pack: core
-category: security-analysis
+category: ops
 version: "1.0.0"
 description: "Runs security scanners — SAST, dependency audit, secrets detection. Context-driven."
 system_prompt_ref: system_prompt.md

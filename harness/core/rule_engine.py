@@ -36,6 +36,53 @@ DEFAULT_RULES_PATH = Path(
 ) if os.environ.get("GENTCORE_RULES_PATH") else Path(__file__).resolve().parent.parent.parent / "config" / "rules.yaml"
 
 
+def load_tool_actions_from_packs(pack_dir: str | Path) -> dict[str, str]:
+    """Walk a toolpack directory and extract ``{tool_name: action_type}`` map.
+
+    Reads every ``*.yaml`` under ``pack_dir`` (recursively). For each pack
+    that declares a top-level ``action_type:`` (the B3 field), maps every
+    tool in its ``tools:`` list to that action. Tools may be declared as
+    either URI strings (``"tool://aws_s3"``) or inline dicts with ``id:``.
+
+    Packs without an ``action_type`` are skipped (their tools fall through
+    to the hardcoded fallback in ``RuleEngine._tool_to_action``). Malformed
+    YAML is skipped silently.
+
+    Intended bootstrap wiring::
+
+        engine = RuleEngine()
+        engine.register_tool_actions(
+            load_tool_actions_from_packs(PATH_TO_AGENT_TOOLS_PACKS)
+        )
+    """
+    root = Path(pack_dir)
+    mapping: dict[str, str] = {}
+    if not root.is_dir():
+        return mapping
+
+    for yaml_path in root.rglob("*.yaml"):
+        try:
+            data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        action = data.get("action_type")
+        if not action:
+            continue
+        for tool in data.get("tools", []) or []:
+            if isinstance(tool, dict):
+                tool_id = tool.get("id", "")
+            else:
+                tool_id = str(tool)
+            if not tool_id:
+                continue
+            tool_name = tool_id.split("tool://", 1)[-1]
+            mapping[tool_name] = str(action)
+
+    return mapping
+
+
 class Decision(str, Enum):
     ALLOW = "allow"
     DENY = "deny"
@@ -79,12 +126,33 @@ class RuleEngine:
     Hot-reloads config/rules.yaml on each check if the file has changed.
     """
 
+    # Debounce window for _hot_reload: at most one stat()/check per this many
+    # milliseconds. File changes still take effect within one window. See H5
+    # in FRAMEWORK_AUDIT_2026Q2.
+    HOT_RELOAD_DEBOUNCE_MS: int = 500
+
     def __init__(self, rules_path: str | Path | None = None) -> None:
         self._rules_path = Path(rules_path) if rules_path else DEFAULT_RULES_PATH
         self._data: dict[str, Any] = {}
         self._last_mtime: float = 0.0
+        self._last_reload_check: float = 0.0
+        self._hot_reload_debounce_ms: int = self.HOT_RELOAD_DEBOUNCE_MS
         self._audit_log: list[dict[str, Any]] = []
+        # H6 — pack-driven tool → action map. Populated at bootstrap from
+        # toolpack metadata (ToolPackManifest.action_type). Takes precedence
+        # over the hardcoded _HARDCODED_TOOL_ACTIONS fallback below.
+        self._tool_action_map: dict[str, str] = {}
         self._load()
+
+    def register_tool_actions(self, mapping: dict[str, str]) -> None:
+        """Register a batch of ``{tool_name: action_type}`` entries.
+
+        Call at bootstrap (typically from a boot helper that walks the agent-tools
+        pack directory via :func:`load_tool_actions_from_packs`). Merges with
+        any previously-registered entries; later calls overwrite earlier ones
+        for the same tool.
+        """
+        self._tool_action_map.update(mapping)
 
     # ------------------------------------------------------------------
     # Public API
@@ -321,21 +389,32 @@ class RuleEngine:
         order = {"deny": 0, "ask": 1, "allow": 2}
         return a if order.get(a, 1) <= order.get(b, 1) else b
 
-    @staticmethod
-    def _tool_to_action(tool_name: str) -> str:
-        """Map a tool name to a permission action."""
-        mapping = {
-            "file_read": "file_read",
-            "file_write": "file_write",
-            "file_list": "file_read",
-            "file_delete": "file_delete",
-            "file_exists": "file_read",
-            "list_dir": "file_read",
-            "shell_exec": "shell_command",
-            "search_code": "file_read",
-            "search_files": "file_read",
-        }
-        return mapping.get(tool_name, "shell_command")
+    # Hardcoded fallback — used when no pack-driven entry is registered.
+    # Preserved for backward compatibility with the pre-H6 behaviour.
+    _HARDCODED_TOOL_ACTIONS: dict[str, str] = {
+        "file_read": "file_read",
+        "file_write": "file_write",
+        "file_list": "file_read",
+        "file_delete": "file_delete",
+        "file_exists": "file_read",
+        "list_dir": "file_read",
+        "shell_exec": "shell_command",
+        "search_code": "file_read",
+        "search_files": "file_read",
+    }
+
+    def _tool_to_action(self, tool_name: str) -> str:
+        """Map a tool name to a permission action.
+
+        Resolution order (H6):
+          1. Pack-driven map populated via :meth:`register_tool_actions`
+             (sourced from ToolPackManifest.action_type — the B3 field)
+          2. Hardcoded fallback for core filesystem/shell tools
+          3. ``shell_command`` (most restrictive) for truly unknown tools
+        """
+        if tool_name in self._tool_action_map:
+            return self._tool_action_map[tool_name]
+        return self._HARDCODED_TOOL_ACTIONS.get(tool_name, "shell_command")
 
     # ------------------------------------------------------------------
     # Hot-reload + audit
@@ -351,7 +430,18 @@ class RuleEngine:
             self._last_mtime = 0.0
 
     def _hot_reload(self) -> None:
-        """Reload config if file has changed since last load."""
+        """Reload config if the file changed since last load.
+
+        Debounced: skips the filesystem stat entirely when called more
+        frequently than ``HOT_RELOAD_DEBOUNCE_MS``. File edits still take
+        effect within one debounce window (default 500 ms).
+        """
+        now = time.time()
+        window_s = self._hot_reload_debounce_ms / 1000.0
+        if now - self._last_reload_check < window_s:
+            return
+        self._last_reload_check = now
+
         if not self._rules_path.exists():
             return
         try:

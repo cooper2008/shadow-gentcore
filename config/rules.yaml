@@ -83,3 +83,21 @@ category_overrides:
     file_edit: deny
     shell_command: deny
     network_access: deny
+
+  # Shell-executing execution-stage agents (Deploy, TestRunner, Linter,
+  # SecurityScan, etc.) — need shell to run real commands; must not mutate code.
+  ops:
+    file_write: deny
+    file_edit: deny
+    file_create: deny
+    shell_command: allow
+    network_access: deny
+
+  # Audit/compliance review — read-only; may need network reads for
+  # documentation lookup but never writes or shell.
+  compliance:
+    file_write: deny
+    file_edit: deny
+    file_create: deny
+    shell_command: deny
+    network_access: ask

@@ -111,3 +111,54 @@ class TestManifestLoader:
         assert workflow["name"] == "test_workflow"
         assert "step1" in step_configs
         assert engine is not None
+
+
+class TestIndustryRegistry:
+    """B4 — industry field on DomainManifest + config/industries.yaml registry."""
+
+    def test_industry_roundtrip_through_load_domain(self, tmp_path: Path) -> None:
+        """Domain.yaml industry field is preserved through load_domain."""
+        domain = {
+            "name": "acme-ops",
+            "owner": "sre",
+            "purpose": "Incident response",
+            "industry": "aws-ops",
+        }
+        _write(tmp_path / "domain.yaml", yaml.dump(domain))
+        loader = ManifestLoader()
+        result = loader.load_domain(tmp_path)
+        assert result["industry"] == "aws-ops"
+
+    def test_load_domain_without_industry(self, tmp_path: Path) -> None:
+        """Domain.yaml without industry is still valid — field is optional."""
+        domain = {"name": "backend", "owner": "team", "purpose": "test"}
+        _write(tmp_path / "domain.yaml", yaml.dump(domain))
+        loader = ManifestLoader()
+        result = loader.load_domain(tmp_path)
+        assert result.get("industry") is None
+
+    def test_load_industries_from_project_config(self) -> None:
+        """Default load_industries() reads shadow-gentcore's config/industries.yaml."""
+        industries = ManifestLoader.load_industries()
+        assert "aws-ops" in industries
+        assert "generic" in industries
+        entry = industries["aws-ops"]
+        assert "description" in entry
+        assert "typical_stages" in entry
+        assert "typical_packs" in entry
+
+    def test_load_industries_missing_file(self, tmp_path: Path) -> None:
+        """load_industries returns empty dict when file is absent (callers must not hard-depend)."""
+        assert ManifestLoader.load_industries(tmp_path) == {}
+
+    def test_load_industries_explicit_dir(self, tmp_path: Path) -> None:
+        """Consumers can point load_industries at a custom config dir."""
+        registry = {
+            "industries": {
+                "custom-vertical": {"description": "Test", "typical_stages": [], "typical_packs": []},
+            }
+        }
+        _write(tmp_path / "industries.yaml", yaml.dump(registry))
+        result = ManifestLoader.load_industries(tmp_path)
+        assert "custom-vertical" in result
+        assert result["custom-vertical"]["description"] == "Test"
