@@ -3,7 +3,13 @@ domain: _factory
 pack: core
 category: fast-codegen
 version: "1.0.0"
-description: "Generates a complete domain directory with agents, system prompts, grading criteria, and workflows"
+description: >-
+  Role (B8 split): ON-DEMAND SINGLE-AGENT SYNTHESIS. Given a CapabilityRecipe
+  ({goal, tools, context}), generates ONE new agent directory (manifest + system
+  prompt + grading criteria) to fill a gap the _shared/ stage catalog doesn't
+  cover. Called from an existing domain when AgentArchitectAgent v2 emits
+  decision=synthesize-new on a roster entry. Does NOT bootstrap full domains —
+  that is _genesis/AgentBuilderAgent/v1's job. See docs/FACTORY_VS_BUILDER.md.
 
 system_prompt_ref: system_prompt.md
 

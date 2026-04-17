@@ -3,7 +3,13 @@ domain: _genesis
 pack: core
 category: fast-codegen
 version: "1.0.0"
-description: "Takes the architect's design and the engineer's context and creates all files for a complete domain. Builds agent manifests, system prompts, grading criteria, workflows, and configs."
+description: >-
+  Role (B8 split): FULL DOMAIN BOOTSTRAP. Takes AgentArchitectAgent's design and
+  ContextEngineerAgent's context and writes every file for a new domain — all
+  agent manifests, system prompts, grading criteria, workflows, and configs in
+  one end-to-end genesis run. Use this when standing up a new domain from
+  scratch. For on-demand synthesis of a SINGLE agent when the catalog lacks
+  coverage, use _factory/AgentFactoryAgent/v1 instead (see docs/FACTORY_VS_BUILDER.md).
 
 system_prompt_ref: system_prompt.md
 
