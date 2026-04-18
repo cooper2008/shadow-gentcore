@@ -52,8 +52,40 @@ output_schema:
           description: "Reference material, documentation, specs"
         workflow_processes:
           type: array
-          items: {type: object}
-          description: "Procedures, SOPs, step-by-step processes"
+          description: >-
+            Distinct task-type buckets the domain's agent fleet should
+            handle (feature_delivery, bug_fix, refactor, docs_refresh,
+            migration, security_audit, perf_investigation, ...). Each
+            entry carries a confidence score + the signal sources that
+            produced it so WorkflowResolver can filter low-signal
+            candidates and the CLI can explain its choices to the user.
+          items:
+            type: object
+            required: [name, confidence, signals]
+            properties:
+              name:
+                type: string
+                description: "Short snake_case process name (e.g. feature_delivery, bug_fix)"
+              description:
+                type: string
+                description: "One-line summary of what this process covers"
+              confidence:
+                type: number
+                minimum: 0
+                maximum: 1
+                description: >-
+                  0.0-1.0 estimate of how confidently this process was
+                  extracted. ≥0.5 makes it through the WorkflowResolver
+                  filter; below that it's discarded unless the domain is
+                  low-signal (then stack-based defaults fill in).
+              signals:
+                type: array
+                description: >-
+                  Which sources produced this candidate. Examples:
+                  `.github/ISSUE_TEMPLATE/bug_report.md`, `git log prefix fix:`,
+                  `CONTRIBUTING.md heading 'How to add a feature'`. Used
+                  verbatim in the CLI report.
+                items: {type: string}
         compliance_rules:
           type: array
           items: {type: object}

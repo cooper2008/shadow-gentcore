@@ -73,6 +73,43 @@ When classifying, sources have different priority levels:
 standards.md MUST say "use snake_case" (from reference). The generated agents
 will ENFORCE reference standards on target repos. This is the whole point.**
 
+### Stage 2.5: EXTRACT workflow_processes (one per task type the domain handles)
+
+`workflow_processes` is special — it drives how many workflows the Architect designs. Each entry represents ONE task type the team routinely handles (feature_delivery, bug_fix, refactor, migration, security_audit, docs_refresh, perf_investigation, dep_upgrade, …). Downstream, one entry here becomes one `workflow_designs[]` item → one YAML file under `<domain>/workflows/`.
+
+Extract candidates from these signals (highest priority first):
+
+| Signal | What it proves | Confidence hint |
+|--------|----------------|-----------------|
+| `.github/ISSUE_TEMPLATE/*.md` | Team already has structured buckets for this task type | **0.85-0.95** |
+| `.github/PULL_REQUEST_TEMPLATE.md` checklist sections | Each distinct section = one process | **0.75-0.90** |
+| `CONTRIBUTING.md` headings matching "How to X" / "Adding a X" / "Fixing a X" | Explicit team-authored process | **0.70-0.90** |
+| Git log subject prefixes counted over the last N commits | Consistent use signals a routinized process. Map: `feat:`→feature_delivery, `fix:`→bug_fix, `refactor:`→refactor, `docs:`→docs_refresh, `perf:`→perf_investigation, `chore:(deps)`→dep_upgrade, `test:`→test_hardening | **0.60-0.90** (scale with frequency) |
+| Labels seen on issues/PRs (when visible in scan) | `bug`/`enhancement`/`security`/`performance` tags | **0.55-0.80** |
+| `.github/workflows/*.yml` | Dedicated pipelines (deploy, release, security_scan) point to operational processes | **0.55-0.75** |
+| `CODEOWNERS` with distinct sections | Different ownership implies different process types | **0.40-0.55** |
+
+Confidence scoring:
+- Start at the hint range for the strongest signal.
+- **Bump** +0.10 if a second signal corroborates (e.g. both issue template AND git log support it).
+- **Clamp down** -0.15 if the signal is ambiguous (one-off commit, empty template file).
+- **Never exceed 0.95** even with perfect evidence — downstream consumers use confidence to weight decisions, not to treat anything as certain.
+
+For each candidate emit:
+
+```yaml
+- name: feature_delivery         # short snake_case
+  description: "Implement a new endpoint or feature with tests"
+  confidence: 0.92
+  signals:
+    - ".github/ISSUE_TEMPLATE/feature_request.md"
+    - "git log: 43 commits with 'feat:' prefix in last 100"
+```
+
+**Minimum:** aim for ≥3 distinct processes when the repo has any non-trivial history. If you find fewer than 3 above confidence 0.5, emit what you have — the downstream `WorkflowResolver` will fall back to stack-based defaults.
+
+**Greenfield note:** for empty repos (no git history, no templates, no CONTRIBUTING.md), emit `workflow_processes: []`. The resolver will populate stack defaults. Do NOT fabricate signals you didn't observe.
+
 ### Stage 3: ASSESS
 
 Score coverage from 0-100 for each category:
