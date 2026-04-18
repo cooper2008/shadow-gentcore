@@ -15,7 +15,14 @@ class AnthropicProvider(BaseProvider):
     - Tool use
     - Streaming responses
 
-    Requires ANTHROPIC_API_KEY environment variable.
+    Credentials (in precedence order):
+      * explicit ``api_key`` / ``auth_token`` constructor args
+      * ``ANTHROPIC_AUTH_TOKEN`` env var (bearer token — used by Minimax etc.)
+      * ``ANTHROPIC_API_KEY`` env var (standard Anthropic x-api-key auth)
+
+    Endpoint override:
+      * explicit ``base_url`` constructor arg
+      * ``ANTHROPIC_BASE_URL`` env var
     """
 
     def __init__(
@@ -23,18 +30,35 @@ class AnthropicProvider(BaseProvider):
         api_key: str = "",
         model: str = "claude-sonnet-4-6-20250414",
         max_tokens: int = 4096,
+        base_url: str | None = None,
+        auth_token: str | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._max_tokens = max_tokens
+        self._base_url = base_url
+        self._auth_token = auth_token
         self._client: Any = None
 
     def _get_client(self) -> Any:
         """Lazy-initialize the Anthropic client."""
         if self._client is None:
             try:
+                import os
                 import anthropic
-                self._client = anthropic.Anthropic(api_key=self._api_key)
+                client_kwargs: dict[str, Any] = {}
+
+                auth_token = self._auth_token or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+                if auth_token:
+                    client_kwargs["auth_token"] = auth_token
+                elif self._api_key:
+                    client_kwargs["api_key"] = self._api_key
+
+                base_url = self._base_url or os.environ.get("ANTHROPIC_BASE_URL")
+                if base_url:
+                    client_kwargs["base_url"] = base_url
+
+                self._client = anthropic.Anthropic(**client_kwargs)
             except ImportError:
                 raise ImportError(
                     "anthropic package not installed. Install with: pip install anthropic"
@@ -71,6 +95,12 @@ class AnthropicProvider(BaseProvider):
                 system = msg.get("content", "")
             else:
                 chat_messages.append(msg)
+
+        # Model-specific prompt nudge (opt-in — empty for strong models)
+        from harness.providers.model_hints import get_model_hint
+        _hint = get_model_hint(model)
+        if _hint:
+            system = (system or "") + _hint
 
         create_kwargs: dict[str, Any] = {
             "model": model,
