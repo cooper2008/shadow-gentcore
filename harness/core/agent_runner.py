@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import logging
 import os
 import time
@@ -356,15 +357,40 @@ class AgentRunner:
 
             _set_state(AgentState.COMPLETED, agent_id)
             self._last_state_log = state_log
-            return {
+
+            content_str = result.get("content", "") if isinstance(result, dict) else str(result)
+
+            # Promote schema fields to top-level so OutputValidator + workflow
+            # gates can read them. Prefer result["parsed_output"] (set by
+            # OutputParser's 4-strategy extraction above — handles prose+JSON,
+            # markdown fences, multi-block outputs). Fall back to raw json.loads
+            # of content for the pure submit_output path.
+            promoted: dict[str, Any] = {}
+            if isinstance(result, dict) and isinstance(result.get("parsed_output"), dict):
+                promoted = result["parsed_output"]
+            elif content_str:
+                try:
+                    parsed = json.loads(content_str)
+                    if isinstance(parsed, dict):
+                        promoted = parsed
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            wrapper: dict[str, Any] = {
                 "result": result,
                 "run_record": run_record,
                 "budget_summary": budget.summary(),
                 "state_log": list(state_log),
                 "status": "completed",
-                "output": result.get("content", "") if isinstance(result, dict) else str(result),
-                "content": result.get("content", "") if isinstance(result, dict) else str(result),
+                "output": promoted if promoted else content_str,
+                "content": content_str,
             }
+            # Promote schema fields without overwriting framework keys.
+            _reserved = set(wrapper.keys()) | {"error"}
+            for key, value in promoted.items():
+                if key not in _reserved:
+                    wrapper[key] = value
+            return wrapper
 
         except BudgetExceededError as exc:
             _set_state(AgentState.FAILED, agent_id, str(exc))

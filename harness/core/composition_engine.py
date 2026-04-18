@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from enum import Enum
@@ -234,6 +235,37 @@ class CompositionEngine:
                     context_items=config.get("context_items"),
                 )
 
+            # Defensive: promote schema fields to top-level so validator + gate
+            # expressions can read them. Prefer result["parsed_output"] (set by
+            # AgentRunner's 4-strategy OutputParser) over raw content so we
+            # handle prose+JSON, markdown fences, and multiple JSON blocks. Safe
+            # to re-run — idempotent, skips already-present keys.
+            if isinstance(result, dict):
+                _inner = (
+                    result.get("parsed_output")
+                    if isinstance(result.get("parsed_output"), dict)
+                    else (result.get("output") if isinstance(result.get("output"), dict) else None)
+                )
+                if _inner is None:
+                    _content = result.get("content", "")
+                    if isinstance(_content, str) and _content:
+                        try:
+                            _parsed = json.loads(_content)
+                            if isinstance(_parsed, dict):
+                                _inner = _parsed
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                if isinstance(_inner, dict):
+                    if not isinstance(result.get("output"), dict):
+                        result["output"] = _inner
+                    _reserved = {"result", "run_record", "budget_summary", "state_log",
+                                 "status", "output", "content", "error", "_validation",
+                                 "_artifact", "_confidence", "parsed_output",
+                                 "output_parse_log"}
+                    for _k, _v in _inner.items():
+                        if _k not in _reserved and _k not in result:
+                            result[_k] = _v
+
             # Post-execution: validate output against schema + grading criteria
             if self._output_validator is not None:
                 agent_dir = config.get("agent_dir")
@@ -392,8 +424,10 @@ class CompositionEngine:
             })
             return True
 
-        # Gate failed — determine failure context
-        failed_output = result.get("output", result.get("content", ""))[:500]
+        # Gate failed — determine failure context. Coerce to str because
+        # `output` may now be a dict (schema-promoted) rather than a string.
+        _raw_output = result.get("output", result.get("content", ""))
+        failed_output = str(_raw_output)[:500]
         validation = result.get("_validation", {})
         issues = validation.get("issues", [])
         score = validation.get("score", "N/A")
