@@ -1442,5 +1442,130 @@ def genesis_evolve(domain: str, run_history: str | None, dry_run: bool) -> None:
         raise SystemExit(1)
 
 
+# ── test ───────────────────────────────────────────────────────────────────
+
+
+@cli.group()
+def test() -> None:
+    """Test commands — smoke tests, health checks."""
+
+
+@test.command("smoke")
+@click.option("--preflight", "preflight_only", is_flag=True, help="Run pre-flight checks only")
+@click.option("--keep", is_flag=True, help="Keep temporary directory for inspection")
+@click.option("--domain", "domain_path", default=None, help="Health check only on existing domain")
+@click.option("--cross-domain", "cross_domain", is_flag=True, help="Run cross-domain workflow only")
+@click.option("--verbose", "-v", is_flag=True, help="Detailed per-agent output")
+def test_smoke(preflight_only: bool, keep: bool, domain_path: str | None, cross_domain: bool, verbose: bool) -> None:
+    """Run smoke tests — full user journey with zero API tokens.
+
+    \b
+    Examples:
+        ./ai test smoke                     # full journey (single + cross-domain)
+        ./ai test smoke --preflight         # pre-flight check only
+        ./ai test smoke --keep              # keep tmp dir for inspection
+        ./ai test smoke --domain ./path     # health check on existing domain
+        ./ai test smoke --cross-domain      # cross-domain workflow only
+        ./ai test smoke --verbose           # detailed output
+    """
+    import tempfile
+    import shutil
+    from harness.tests.smoke.preflight import PreflightCheck
+    from harness.tests.smoke.smoke_runner import SmokeRunner
+
+    project_root = Path(__file__).resolve().parent.parent.parent
+
+    # 1. Pre-flight
+    click.echo("Pre-flight checks:")
+    report = PreflightCheck(project_root).check_all()
+    for line in report.summary_lines():
+        click.echo(line)
+    click.echo()
+
+    if report.has_fatal:
+        click.echo(f"FATAL: {report.fatal_summary}", err=True)
+        raise SystemExit(1)
+
+    click.echo(f"Pre-flight: {report.passed_count}/{report.total_count} passed")
+    click.echo()
+
+    if preflight_only:
+        return
+
+    # 2. Health check on existing domain
+    if domain_path:
+        dp = Path(domain_path).resolve()
+        if not dp.is_dir():
+            click.echo(f"Error: Domain path not found: {dp}", err=True)
+            raise SystemExit(1)
+
+        runner = SmokeRunner(project_root=project_root, verbose=verbose)
+        health = runner.validate_domain_health(dp)
+        click.echo(f"Domain health: {dp.name}")
+        click.echo(f"  Score: {health.score:.0%}")
+        click.echo(f"  Agents: {len(health.agents)}")
+        for agent in health.agents:
+            if agent.healthy:
+                click.echo(f"    ✓ {agent.name}")
+            else:
+                click.echo(f"    ✗ {agent.name}: {'; '.join(agent.issues[:3])}")
+        click.echo(f"  Workflows: {len(health.workflows)}")
+        for wf in health.workflows:
+            if wf.healthy:
+                click.echo(f"    ✓ {wf.name}")
+            else:
+                click.echo(f"    ✗ {wf.name}: {'; '.join(wf.issues[:3])}")
+        if not health.all_healthy:
+            raise SystemExit(1)
+        return
+
+    # 3. Full journey
+    tmp_dir = Path(tempfile.mkdtemp(prefix="gentcore-smoke-"))
+    click.echo(f"Smoke test directory: {tmp_dir}")
+    if keep:
+        click.echo("  (will be kept after test)")
+    click.echo()
+
+    runner = SmokeRunner(project_root=project_root, verbose=verbose)
+
+    try:
+        if cross_domain:
+            click.echo("Running cross-domain journey...")
+            smoke_report = asyncio.run(runner.run_cross_domain_journey(tmp_dir))
+        else:
+            click.echo("Running full journey (single-domain)...")
+            smoke_report = asyncio.run(runner.run_full_journey(tmp_dir))
+
+            if smoke_report.passed:
+                click.echo()
+                click.echo("Running cross-domain journey...")
+                cross_report = asyncio.run(runner.run_cross_domain_journey(tmp_dir))
+                # Merge cross-domain steps into main report
+                for step in cross_report.steps:
+                    step.name = f"cross_{step.name}"
+                    smoke_report.steps.append(step)
+
+        # Print results
+        click.echo()
+        click.echo("Results:")
+        for step in smoke_report.steps:
+            icon = "✓" if step.passed else "✗"
+            click.echo(f"  {icon} {step.name}: {step.message}")
+            if verbose and step.detail:
+                click.echo(f"      {step.detail}")
+        click.echo()
+        click.echo(smoke_report.summary)
+
+        if not smoke_report.passed:
+            raise SystemExit(1)
+
+    finally:
+        if not keep:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            click.echo(f"Cleaned up: {tmp_dir}")
+        else:
+            click.echo(f"Kept: {tmp_dir}")
+
+
 if __name__ == "__main__":
     cli()
