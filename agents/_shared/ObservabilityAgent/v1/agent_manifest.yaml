@@ -1,0 +1,78 @@
+id: _shared/ObservabilityAgent/v1
+domain: _shared
+pack: core
+category: ops
+version: "1.0.0"
+description: "Emits observability config — dashboards, SLOs, alert rules — for a domain surface. Covers the Observability stage (different from NotifierAgent, which only sends)."
+stage: Observability
+system_prompt_ref: system_prompt.md
+grading_criteria_ref: grading_criteria.yaml
+execution_mode:
+  primary: plan_execute
+  max_plan_steps: 8
+tools:
+  - name: file_read
+    description: "Read service definitions, existing dashboards, SLO templates"
+    pack: "toolpack://core/filesystem"
+  - name: file_write
+    description: "Write dashboard / alert / SLO config files"
+    pack: "toolpack://core/filesystem"
+  - name: search_code
+    description: "Find metric emission points in the target service"
+    pack: "toolpack://core/search"
+permissions:
+  file_edit: allow
+  file_create: allow
+  shell_command: deny
+  network_access: ask
+harness:
+  gate_condition: "files_written > 0 and slo_count > 0"
+  gate_on_fail: retry
+  max_retries: 2
+  grading_threshold: 0.7
+input_schema:
+  type: object
+  required: [service, stack]
+  properties:
+    service:
+      type: string
+      description: "Service name to instrument (e.g. 'reviews-api')"
+    stack:
+      type: object
+      description: "Observability stack — which tools to emit config for"
+      properties:
+        metrics: {type: string, description: "prometheus | datadog | cloudwatch | otel", default: "prometheus"}
+        dashboards: {type: string, description: "grafana | datadog | cloudwatch"}
+        alerting: {type: string, description: "alertmanager | pagerduty | opsgenie"}
+    slo_targets:
+      type: array
+      description: "Declared SLO targets; the agent fills in alerting thresholds around these"
+      items:
+        type: object
+        required: [indicator, target]
+        properties:
+          indicator: {type: string, description: "e.g. http_p99_latency_ms"}
+          target: {type: number, description: "e.g. 200"}
+          window: {type: string, default: "30d"}
+    output_dir:
+      type: string
+      default: "observability/"
+output_schema:
+  type: object
+  required: [files_written, slo_count, alert_count, summary]
+  properties:
+    files_written:
+      type: integer
+      description: "How many config files landed on disk"
+    slo_count:
+      type: integer
+    alert_count:
+      type: integer
+    files:
+      type: array
+      items: {type: string}
+    summary:
+      type: string
+metadata:
+  author: platform-team
+  tags: [shared, observability, slo, metrics, alerting, reusable]

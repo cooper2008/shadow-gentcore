@@ -1,0 +1,74 @@
+id: _shared/RetrievalAgent/v1
+domain: _shared
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Knowledge retrieval stage — fetches relevant context (runbooks, wiki, code) for downstream agents. Covers the Retrieve / RAG stage."
+stage: Retrieve
+system_prompt_ref: system_prompt.md
+grading_criteria_ref: grading_criteria.yaml
+execution_mode:
+  primary: react
+  max_react_steps: 6
+tools:
+  - name: file_read
+    description: "Read local files (runbooks, docs, source)"
+    pack: "toolpack://core/filesystem"
+  - name: search_code
+    description: "Grep the codebase for references"
+    pack: "toolpack://core/search"
+  - name: search_files
+    description: "Locate candidate files by name / glob"
+    pack: "toolpack://core/search"
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: ask
+harness:
+  gate_condition: "has_output == true"
+  gate_on_fail: retry
+  max_retries: 2
+  grading_threshold: 0.7
+input_schema:
+  type: object
+  required: [query]
+  properties:
+    query:
+      type: string
+      description: "What the caller is looking for — question, symbol, pattern, ticket ID, etc."
+    scope:
+      type: array
+      items: {type: string}
+      description: "Optional path/glob restrictions for the search (e.g. [src/, docs/runbooks/])."
+    max_results:
+      type: integer
+      minimum: 1
+      default: 10
+output_schema:
+  type: object
+  required: [query, hits, summary, has_output]
+  properties:
+    query: {type: string}
+    hits:
+      type: array
+      description: "Ranked list of retrieved snippets with provenance"
+      items:
+        type: object
+        required: [source, excerpt, relevance]
+        properties:
+          source: {type: string, description: "Path or URI where the snippet came from"}
+          excerpt: {type: string, description: "The retrieved text (trimmed)"}
+          relevance: {type: number, minimum: 0, maximum: 1}
+          line_range:
+            type: array
+            items: {type: integer}
+    summary:
+      type: string
+      description: "One-paragraph synthesis of the retrieved context"
+    has_output:
+      type: boolean
+      description: "False when no relevant content was found — triggers gate"
+metadata:
+  author: platform-team
+  tags: [shared, retrieval, rag, knowledge, reusable]

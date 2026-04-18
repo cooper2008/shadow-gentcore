@@ -1,0 +1,68 @@
+id: _shared/TriageAgent/v1
+domain: _shared
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Incident / ticket / task triage — classifies severity + domain, picks next action, routes to the right downstream agent. Covers the Triage stage."
+stage: Triage
+system_prompt_ref: system_prompt.md
+grading_criteria_ref: grading_criteria.yaml
+execution_mode:
+  primary: self_ask
+  max_rounds: 3
+tools:
+  - name: file_read
+    description: "Read referenced runbooks / playbooks to inform triage"
+    pack: "toolpack://core/filesystem"
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+harness:
+  gate_condition: "classification != null"
+  gate_on_fail: retry
+  max_retries: 1
+  grading_threshold: 0.75
+input_schema:
+  type: object
+  required: [signal]
+  properties:
+    signal:
+      type: object
+      description: "The raw incoming signal — alert, ticket, PR event, log line, etc."
+      required: [summary]
+      properties:
+        summary: {type: string}
+        source: {type: string, description: "alert | ticket | pr | log | email | slack"}
+        payload: {type: object}
+    classification_schema:
+      type: object
+      description: "Caller-provided enum of buckets + their meaning, e.g. {bug: user-facing defect, security: CVE-grade, infra: ops issue}"
+output_schema:
+  type: object
+  required: [classification, severity, confidence, rationale, recommended_next_step]
+  properties:
+    classification:
+      type: string
+      description: "Bucket this signal falls into. Used by a router gate to dispatch the next workflow step."
+    severity:
+      type: string
+      enum: [critical, high, medium, low, info]
+    confidence:
+      type: number
+      minimum: 0
+      maximum: 1
+      description: "How sure the triage is. Low confidence → route to human review."
+    rationale:
+      type: string
+      description: "One-paragraph explanation of why this classification was chosen"
+    recommended_next_step:
+      type: string
+      description: "Name of the downstream step that should handle this (e.g. 'investigate', 'deploy', 'human_review')"
+    tags:
+      type: array
+      items: {type: string}
+metadata:
+  author: platform-team
+  tags: [shared, triage, incident, routing, reusable]

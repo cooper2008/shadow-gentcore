@@ -1,0 +1,18 @@
+threshold: 0.7
+criteria:
+  - name: files_written_nonzero
+    type: automated
+    check: "files_written > 0"
+    weight: 0.3
+  - name: slo_defined
+    type: automated
+    check: "slo_count > 0"
+    weight: 0.3
+  - name: alerts_derived
+    type: automated
+    check: "alert_count >= slo_count"
+    weight: 0.2
+  - name: summary_present
+    type: automated
+    check: "len(summary.strip()) > 20"
+    weight: 0.2

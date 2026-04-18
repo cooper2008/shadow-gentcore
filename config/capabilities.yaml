@@ -129,12 +129,15 @@ capabilities:
 
 stage_defaults:
   # ---- 6 new generic stages from B1 (will resolve once that branch merges) ----
-  Triage:       [alerting, observability, knowledge_retrieval]
+  Triage:       [alerting, observability, knowledge_retrieval]    # served by _shared/TriageAgent/v1
   Investigate:  [cloud_query, observability, log_analysis, knowledge_retrieval]
   Execute:      [cloud_control, runbook_exec, shell_exec]
   Respond:      [alerting, ticketing, notification]
   Summarize:    [reporting, ticketing, knowledge_retrieval]
-  Retrieve:     [knowledge_retrieval]
+  Retrieve:     [knowledge_retrieval]                              # served by _shared/RetrievalAgent/v1
+
+  # ---- Observability (emit SLOs + dashboards + alert rules) ----
+  Observability: [observability, alerting]                         # served by _shared/ObservabilityAgent/v1
 
   # ---- 20 existing _shared/ stages (currently shipped on master) ----
   SpecAnalyzer:        [code_read, knowledge_retrieval]

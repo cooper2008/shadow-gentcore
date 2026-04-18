@@ -1,0 +1,22 @@
+threshold: 0.75
+criteria:
+  - name: classification_present
+    type: automated
+    check: "bool(classification)"
+    weight: 0.3
+  - name: severity_valid
+    type: automated
+    check: "severity in ['critical', 'high', 'medium', 'low', 'info']"
+    weight: 0.2
+  - name: confidence_range
+    type: automated
+    check: "0 <= confidence <= 1"
+    weight: 0.15
+  - name: rationale_present
+    type: automated
+    check: "len(rationale.strip()) > 20"
+    weight: 0.15
+  - name: next_step_present
+    type: automated
+    check: "bool(recommended_next_step)"
+    weight: 0.2

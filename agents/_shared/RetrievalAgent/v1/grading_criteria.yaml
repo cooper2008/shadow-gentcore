@@ -1,0 +1,18 @@
+threshold: 0.7
+criteria:
+  - name: has_hits
+    type: automated
+    check: "len(hits) > 0"
+    weight: 0.4
+  - name: sources_cited
+    type: automated
+    check: "all(h.get('source') for h in hits)"
+    weight: 0.2
+  - name: summary_present
+    type: automated
+    check: "bool(summary.strip())"
+    weight: 0.2
+  - name: relevance_filled
+    type: automated
+    check: "all(0 <= h.get('relevance', -1) <= 1 for h in hits)"
+    weight: 0.2
