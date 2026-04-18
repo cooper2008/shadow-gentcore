@@ -74,7 +74,7 @@ input_schema:
 
 output_schema:
   type: object
-  required: [agent_roster, workflow_design, tool_assignments, grading_specs, design_quality]
+  required: [agent_roster, workflow_designs, triage_design, tool_assignments, grading_specs, design_quality]
   properties:
     agent_roster:
       type: array
@@ -179,95 +179,139 @@ output_schema:
               One-sentence explanation of why this decision was chosen. Kept
               in the roster for audit/replay — humans can scan and spot
               mis-applied defaults.
-    workflow_design:
+    # ★ Plural, one entry per workflow_processes bucket the domain handles
+    # (feature_delivery, bug_fix, refactor, migration, ...). Each entry
+    # produces one <domain>/workflows/{name}.yaml file at Build time.
+    workflow_designs:
+      type: array
+      minItems: 1
+      description: >-
+        List of independent workflows, one per
+        knowledge_map.workflow_processes entry (or per domain.yaml
+        workflows.processes override). At Build time, each element becomes
+        one workflow YAML under <domain>/workflows/.
+      items:
+        type: object
+        required: [name, steps, gates]
+        properties:
+          name:
+            type: string
+            description: "Short snake_case (e.g. feature_delivery, bug_fix)"
+          process:
+            type: string
+            description: "Matches knowledge_map.workflow_processes[].name for traceability"
+          description: {type: string}
+          steps:
+            type: array
+            items:
+              type: object
+              required: [agent, depends_on]
+              properties:
+                agent: {type: string}
+                depends_on:
+                  type: array
+                  items: {type: string}
+                description: {type: string}
+                capabilities:
+                  type: array
+                  description: "B5 — capability names this step needs (for traceability)"
+                  items: {type: string}
+          gates:
+            type: array
+            items:
+              type: object
+              required: [after_step, criteria]
+              properties:
+                after_step: {type: string}
+                criteria: {type: string}
+                blocking: {type: boolean}
+                type:
+                  type: string
+                  enum: [standard, router, approval]
+                  default: standard
+                routes:
+                  type: object
+                  additionalProperties: {type: string}
+                  description: >-
+                    Used when type=router. Keys are classification labels the
+                    agent emits; values are step names to dispatch to.
+                approval_message:
+                  type: string
+                  description: "Shown to the human reviewer when type=approval."
+                timeout_seconds:
+                  type: integer
+                  minimum: 1
+          feedback_loops:
+            type: array
+            items:
+              type: object
+              required: [from, to, condition]
+              properties:
+                from: {type: string}
+                to: {type: string}
+                condition: {type: string}
+                max_retries: {type: integer}
+          parallel_branches:
+            type: array
+            items:
+              type: object
+              required: [agents]
+              properties:
+                agents:
+                  type: array
+                  items: {type: string}
+                join_step: {type: string}
+          budget:
+            type: object
+            properties:
+              max_total_tokens: {type: integer}
+              max_per_agent_tokens: {type: integer}
+              timeout_minutes: {type: integer}
+          reset_points:
+            type: array
+            description: >-
+              Step names that serve as rollback checkpoints. When a
+              downstream gate fails with on_fail: rollback,
+              CompositionEngine clears step_results from the reset point
+              onwards and re-runs that layer.
+            items: {type: string}
+
+    # ★ Dispatcher design. Builder emits <domain>/workflows/triage.yaml
+    # from this block when len(workflow_designs) >= 2.
+    triage_design:
       type: object
-      required: [name, steps, gates]
+      required: [classifier_agent, buckets, route_map]
+      description: >-
+        The top-level dispatcher that classifies incoming task requests and
+        routes them to the matching workflow. Builder uses this to emit
+        triage.yaml — the single POST /run entry point.
       properties:
-        name: {type: string}
-        steps:
-          type: array
-          items:
-            type: object
-            required: [agent, depends_on]
-            properties:
-              agent: {type: string}
-              depends_on:
-                type: array
-                items: {type: string}
-              description: {type: string}
-              capabilities:
-                type: array
-                description: "B5 — capability names this step needs (for traceability)"
-                items: {type: string}
-        gates:
-          type: array
-          items:
-            type: object
-            required: [after_step, criteria]
-            properties:
-              after_step: {type: string}
-              criteria: {type: string}
-              blocking: {type: boolean}
-              # Gate type selects behaviour in CompositionEngine:
-              #   standard — pass/fail based on `criteria` (default)
-              #   router   — dispatch to the next step in `routes` by classifying output
-              #   approval — pause workflow, persist request, wait for human sign-off
-              type:
-                type: string
-                enum: [standard, router, approval]
-                default: standard
-              # For `type: router` — map classification label → next step name.
-              routes:
-                type: object
-                additionalProperties: {type: string}
-                description: >-
-                  Used when type=router. Keys are classification labels the
-                  agent emits; values are step names to dispatch to. Example:
-                  `{approved: deploy, rejected: refactor, needs_review: human_review}`.
-              # For `type: approval` — user-visible message + wait timeout.
-              approval_message:
-                type: string
-                description: "Shown to the human reviewer when type=approval."
-              timeout_seconds:
-                type: integer
-                minimum: 1
-                description: "Max seconds to wait (approval gates) or execute (standard gates)."
-        feedback_loops:
-          type: array
-          items:
-            type: object
-            required: [from, to, condition]
-            properties:
-              from: {type: string}
-              to: {type: string}
-              condition: {type: string}
-              max_retries: {type: integer}
-        parallel_branches:
-          type: array
-          items:
-            type: object
-            required: [agents]
-            properties:
-              agents:
-                type: array
-                items: {type: string}
-              join_step: {type: string}
-        budget:
-          type: object
-          properties:
-            max_total_tokens: {type: integer}
-            max_per_agent_tokens: {type: integer}
-            timeout_minutes: {type: integer}
-        reset_points:
-          type: array
+        classifier_agent:
+          type: string
           description: >-
-            Step names that serve as rollback checkpoints. When a downstream
-            gate fails with `on_fail: rollback`, CompositionEngine clears
-            step_results from the reset point onwards and re-runs that layer.
-            Place reset points at major DAG boundaries (e.g. after "implement"
-            in a plan→implement→test→review DAG) so a single bad test run
-            doesn't force replanning from scratch.
+            Agent ID used to classify. Default: _shared/TriageAgent/v1 (runs
+            in self_ask mode). Synthesize a domain-specific one only when
+            domain-specific routing expertise is required.
+        buckets:
+          type: array
+          description: "Classification labels emitted by classifier_agent (one per target workflow + 'unknown' fallback)."
           items: {type: string}
+        route_map:
+          type: object
+          additionalProperties: {type: string}
+          description: >-
+            bucket_label -> workflow name. MUST include an 'unknown' entry
+            pointing at an escalation path (e.g. 'human_review').
+
+    # Deprecated — kept so legacy mocks / partial outputs still load.
+    # When the architect emits only `workflow_design` (singular), the
+    # ManifestLoader shim lifts it into workflow_designs[0].
+    workflow_design:
+      deprecated: true
+      type: object
+      description: >-
+        DEPRECATED. Use workflow_designs[] instead. Auto-migrated by
+        harness/core/manifest_loader.py when present alone.
     tool_assignments:
       type: object
       description: "Map of agent_name to list of tools assigned"

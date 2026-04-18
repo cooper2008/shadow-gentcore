@@ -190,3 +190,83 @@ class TestFeatureFlagSwap:
         """v2 ships alongside v1 — v1 is not renamed or deleted."""
         assert V1_PATH.exists()
         assert (V1_PATH / "agent_manifest.yaml").exists()
+
+
+class TestMultiWorkflowSchema:
+    """v2 emits multiple workflows per domain + a triage dispatcher design.
+
+    Prior schema: singular `workflow_design` — one DAG per domain.
+    New schema:   plural `workflow_designs[]` + `triage_design{}` so a team's
+    Tier-B service handles many task types from one `/run` endpoint.
+    """
+
+    @pytest.fixture(scope="class")
+    def manifest(self) -> dict:
+        return yaml.safe_load((V2_PATH / "agent_manifest.yaml").read_text())
+
+    def test_workflow_designs_is_required_property(self, manifest: dict) -> None:
+        required = manifest["output_schema"]["required"]
+        assert "workflow_designs" in required, (
+            "Architect v2 must declare workflow_designs as required — the"
+            " singular workflow_design is deprecated."
+        )
+
+    def test_workflow_designs_is_array_with_min_items(self, manifest: dict) -> None:
+        schema = manifest["output_schema"]["properties"]["workflow_designs"]
+        assert schema["type"] == "array"
+        assert schema.get("minItems", 0) >= 1
+
+    def test_workflow_designs_item_has_process_field(self, manifest: dict) -> None:
+        """Each workflow_design carries a `process` back-reference to KnowledgeMapper."""
+        item_schema = manifest["output_schema"]["properties"]["workflow_designs"]["items"]
+        props = item_schema.get("properties", {})
+        assert "process" in props, "workflow_designs[].process missing (traceability)"
+        assert "name" in item_schema.get("required", [])
+
+    def test_triage_design_is_required_property(self, manifest: dict) -> None:
+        required = manifest["output_schema"]["required"]
+        assert "triage_design" in required
+
+    def test_triage_design_has_required_fields(self, manifest: dict) -> None:
+        triage_schema = manifest["output_schema"]["properties"]["triage_design"]
+        required = triage_schema.get("required", [])
+        for key in ("classifier_agent", "buckets", "route_map"):
+            assert key in required, f"triage_design.required missing {key}"
+
+    def test_workflow_design_singular_still_present_deprecated(self, manifest: dict) -> None:
+        """Back-compat alias stays for transitional outputs / legacy mocks."""
+        props = manifest["output_schema"]["properties"]
+        assert "workflow_design" in props
+        assert props["workflow_design"].get("deprecated") is True
+
+
+class TestGenesisStubEmitsMultiWorkflow:
+    """Smoke: the genesis_test_provider stubs produce multi-workflow output."""
+
+    def test_stub_architect_emits_workflow_designs_array(self) -> None:
+        from harness.tests.genesis_test_provider import GENESIS_OUTPUTS
+
+        architect_out = GENESIS_OUTPUTS["AgentArchitectAgent"]
+        assert isinstance(architect_out.get("workflow_designs"), list)
+        assert len(architect_out["workflow_designs"]) >= 3
+
+    def test_stub_architect_emits_triage_design(self) -> None:
+        from harness.tests.genesis_test_provider import GENESIS_OUTPUTS
+
+        triage = GENESIS_OUTPUTS["AgentArchitectAgent"].get("triage_design")
+        assert isinstance(triage, dict)
+        assert triage["classifier_agent"]
+        assert "unknown" in triage["route_map"]
+
+    def test_stub_triage_routes_point_at_generated_workflows(self) -> None:
+        """Every non-fallback route must match an actual workflow_designs[].name."""
+        from harness.tests.genesis_test_provider import GENESIS_OUTPUTS
+
+        architect_out = GENESIS_OUTPUTS["AgentArchitectAgent"]
+        design_names = {d["name"] for d in architect_out["workflow_designs"]}
+        fallbacks = {"human_review", "triage_escalation"}
+        for label, target in architect_out["triage_design"]["route_map"].items():
+            assert target in design_names or target in fallbacks, (
+                f"triage route {label}->{target} doesn't match any workflow_design "
+                f"name nor a known fallback"
+            )

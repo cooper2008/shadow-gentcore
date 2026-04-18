@@ -42,17 +42,35 @@ For each roster entry:
 3. For each capability, look up `capability_map.capabilities[<cap>].packs` to get the list of toolpack URIs that satisfy it.
 4. Emit one `capability_bindings` entry per capability: `{capability: <name>, resolved_packs: [...]}`.
 
-### Step 4 — Build the workflow DAG
-1. Order steps by data dependency (use `depends_on`).
-2. Identify parallel branches (independent steps that share no dependencies).
-3. Place **gates** at critical checkpoints — after content generation, after compliance-sensitive steps, before final output.
-4. Add **feedback loops** where quality gates may send work back for revision.
-5. Each step carries a `capabilities: [<cap>, ...]` array mirroring the roster entry, for traceability.
+### Step 4 — Build ONE workflow DAG per entry in `knowledge_map.workflow_processes`
+For each process the KnowledgeMapper surfaced (feature_delivery, bug_fix, refactor, migration, docs_refresh, …), design a dedicated DAG. Each DAG becomes one YAML file under `<domain>/workflows/` at Build time.
+
+For each workflow:
+1. Pick the subset of agents from `agent_roster` that this process needs (e.g. feature_delivery uses `plan → implement → test → review`; bug_fix uses `reproduce → diagnose → fix → test`; docs_refresh uses `audit → regenerate → review`).
+2. Order steps by data dependency (use `depends_on`).
+3. Identify parallel branches (independent steps that share no dependencies).
+4. Place **gates** at critical checkpoints — after content generation, after compliance-sensitive steps, before final output.
+5. Add **feedback loops** where quality gates may send work back for revision.
+6. Each step carries a `capabilities: [<cap>, ...]` array mirroring the roster entry, for traceability.
+
+Emit the result as `workflow_designs: [...]` (plural). Each item carries `{name, process, steps, gates, feedback_loops, reset_points, parallel_branches, budget}` — `process` echoes the KnowledgeMapper process name for traceability.
+
+**The same agent may appear in multiple workflows** — reuse is the point. `FastAPICodeGenAgent` typically shows up in feature_delivery, bug_fix, AND migration.
+
+### Step 4.5 — Design the triage dispatcher
+When `len(workflow_designs) >= 2`, also emit `triage_design`:
+
+1. `classifier_agent`: default `_shared/TriageAgent/v1`. Synthesize `{domain}/TriageAgent/v1` only when the routing logic needs domain-specific signals that the generic classifier can't learn.
+2. `buckets`: one label per `workflow_designs[].name`, plus `unknown` for anything the classifier can't confidently place.
+3. `route_map`: `{label: workflow_name}` — the dispatcher sends each classification to the matching workflow. `unknown` must map to a safe fallback (typically a workflow called `human_review` or `triage_escalation` that pauses for human input).
+
+When `len(workflow_designs) == 1` (single-process domain), skip `triage_design` — Builder won't emit triage.yaml for a single workflow.
 
 ### Step 5 — Self-review + report
 Before emitting your output, self-check:
-1. **DAG validity**: no cycles.
-2. **Process coverage**: every `workflow_processes` entry in knowledge_map is covered. Compute `process_coverage_pct`.
+1. **DAG validity**: no cycles in any workflow_designs[*] DAG.
+2. **Process coverage**: every `workflow_processes` entry in knowledge_map is covered by at least one entry in `workflow_designs`. Compute `process_coverage_pct`. When coverage drops below 80% log a warning in `design_quality.coverage_notes`.
+3. **Triage completeness**: if `triage_design` is emitted, every `buckets[*]` has a matching `route_map` entry, every `route_map` value is either a `workflow_designs[].name` or a well-known fallback (`human_review`, `triage_escalation`), and an `unknown:` key exists.
 3. **Reuse ratio**: count roster entries where `decision in [reuse-core, reuse-with-prompt-override]`, divide by total roster size. Report in `design_quality.reuse_ratio`. Aim for ≥ 0.7 for SWE domains, ≥ 0.6 for novel industries.
 4. **Every roster entry has a `harness` section**. Missing harness = rejected design. Required keys: `gate_condition`, `gate_on_fail`, `max_retries`, `grading_threshold`.
 5. **Every roster entry has `capability_bindings`**. Even `reuse-core` entries need bindings so the workflow step gets the right toolpacks.

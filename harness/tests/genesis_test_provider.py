@@ -300,24 +300,113 @@ GENESIS_OUTPUTS: dict[str, dict[str, Any]] = {
                 "harness": {"gate_condition": "status == success", "gate_on_fail": "retry", "max_retries": 1, "fallback_step": None, "grading_threshold": 0.80},
             },
         ],
+        # Plural — one workflow per domain process (feature_delivery, bug_fix, …).
+        "workflow_designs": [
+            {
+                "name": "feature_delivery",
+                "process": "feature_delivery",
+                "steps": [
+                    {"name": "code",   "agent": "CodeWriterAgent",   "depends_on": [],                  "description": "Write feature code"},
+                    {"name": "lint",   "agent": "LinterAgent",       "depends_on": ["code"],            "description": "Lint check"},
+                    {"name": "test",   "agent": "TestRunnerAgent",   "depends_on": ["code"],            "description": "Run tests"},
+                    {"name": "review", "agent": "ReviewerAgent",     "depends_on": ["lint", "test"],    "description": "Code review"},
+                ],
+                "gates": [
+                    {"step": "lint",   "condition": "lint_passed == true",   "on_fail": "retry", "max_retries": 2},
+                    {"step": "test",   "condition": "tests_passed == true",  "on_fail": "retry", "max_retries": 2},
+                    {"step": "review", "condition": "approved == true",      "on_fail": "retry", "max_retries": 1},
+                ],
+                "feedback_loops": [
+                    {"from_step": "review", "to_step": "code", "condition": "review.approved == false", "max_iterations": 2},
+                ],
+                "reset_points": ["code"],
+                "parallel_branches": [["lint", "test"]],
+                "budget": {"max_tokens": 200000, "max_cost_usd": 10.0, "max_duration_seconds": 1200},
+            },
+            {
+                "name": "bug_fix",
+                "process": "bug_fix",
+                "steps": [
+                    {"name": "reproduce", "agent": "TestRunnerAgent", "depends_on": [],               "description": "Reproduce the failure"},
+                    {"name": "fix",       "agent": "CodeWriterAgent", "depends_on": ["reproduce"],    "description": "Write fix"},
+                    {"name": "verify",    "agent": "TestRunnerAgent", "depends_on": ["fix"],          "description": "Verify fix resolves the failure"},
+                    {"name": "review",    "agent": "ReviewerAgent",   "depends_on": ["verify"],       "description": "Review before merge"},
+                ],
+                "gates": [
+                    {"step": "reproduce", "condition": "failure_reproduced == true", "on_fail": "escalate_human", "max_retries": 0},
+                    {"step": "verify",    "condition": "tests_passed == true",      "on_fail": "retry",          "max_retries": 2},
+                    {"step": "review",    "condition": "approved == true",          "on_fail": "retry",          "max_retries": 1},
+                ],
+                "feedback_loops": [
+                    {"from_step": "verify", "to_step": "fix", "condition": "tests_passed == false", "max_iterations": 2},
+                ],
+                "reset_points": ["fix"],
+            },
+            {
+                "name": "refactor",
+                "process": "refactor",
+                "steps": [
+                    {"name": "plan",    "agent": "RefactorPlannerAgent", "depends_on": [],          "description": "Design the refactor"},
+                    {"name": "apply",   "agent": "CodeWriterAgent",      "depends_on": ["plan"],    "description": "Apply refactor edits"},
+                    {"name": "test",    "agent": "TestRunnerAgent",      "depends_on": ["apply"],   "description": "Ensure behaviour preserved"},
+                    {"name": "review",  "agent": "ReviewerAgent",        "depends_on": ["test"],    "description": "Review"},
+                ],
+                "gates": [
+                    {"step": "test",   "condition": "tests_passed == true", "on_fail": "retry", "max_retries": 1},
+                    {"step": "review", "condition": "approved == true",     "on_fail": "retry", "max_retries": 1},
+                ],
+                "feedback_loops": [
+                    {"from_step": "test", "to_step": "apply", "condition": "tests_passed == false", "max_iterations": 2},
+                ],
+                "reset_points": ["apply"],
+            },
+            {
+                "name": "docs_refresh",
+                "process": "docs_refresh",
+                "steps": [
+                    {"name": "audit",      "agent": "ReviewerAgent",      "depends_on": [],             "description": "Audit docs for staleness"},
+                    {"name": "regenerate", "agent": "DocGeneratorAgent",  "depends_on": ["audit"],      "description": "Regenerate affected pages"},
+                    {"name": "review",     "agent": "ReviewerAgent",      "depends_on": ["regenerate"], "description": "Review regenerated docs"},
+                ],
+                "gates": [
+                    {"step": "review", "condition": "approved == true", "on_fail": "retry", "max_retries": 1},
+                ],
+            },
+        ],
+        # Back-compat alias — legacy tests read `workflow_design` (singular).
+        # Mirrors workflow_designs[0] (feature_delivery) so existing
+        # assertions on gates/feedback_loops/parallel_branches keep passing.
         "workflow_design": {
-            "name": "feature_development",
+            "name": "feature_delivery",
             "steps": [
-                {"name": "code", "agent": "CodeWriterAgent", "description": "Write feature code"},
-                {"name": "lint", "agent": "LinterAgent", "depends_on": ["code"], "description": "Lint check"},
-                {"name": "test", "agent": "TestRunnerAgent", "depends_on": ["code"], "description": "Run tests"},
-                {"name": "review", "agent": "ReviewerAgent", "depends_on": ["lint", "test"], "description": "Code review"},
+                {"name": "code",   "agent": "CodeWriterAgent",   "depends_on": [],               "description": "Write feature code"},
+                {"name": "lint",   "agent": "LinterAgent",       "depends_on": ["code"],         "description": "Lint check"},
+                {"name": "test",   "agent": "TestRunnerAgent",   "depends_on": ["code"],         "description": "Run tests"},
+                {"name": "review", "agent": "ReviewerAgent",     "depends_on": ["lint", "test"], "description": "Code review"},
             ],
             "gates": [
-                {"step": "lint", "condition": "lint_passed == true", "on_fail": "retry", "max_retries": 2},
-                {"step": "test", "condition": "tests_passed == true", "on_fail": "retry", "max_retries": 2},
-                {"step": "review", "condition": "approved == true", "on_fail": "retry", "max_retries": 1},
+                {"step": "lint",   "condition": "lint_passed == true",   "on_fail": "retry", "max_retries": 2},
+                {"step": "test",   "condition": "tests_passed == true",  "on_fail": "retry", "max_retries": 2},
+                {"step": "review", "condition": "approved == true",      "on_fail": "retry", "max_retries": 1},
             ],
             "feedback_loops": [
                 {"from_step": "review", "to_step": "code", "condition": "review.approved == false", "max_iterations": 2},
             ],
+            "reset_points": ["code"],
             "parallel_branches": [["lint", "test"]],
             "budget": {"max_tokens": 200000, "max_cost_usd": 10.0, "max_duration_seconds": 1200},
+        },
+        # Dispatcher — Builder emits workflows/triage.yaml from this.
+        "triage_design": {
+            "classifier_agent": "_shared/TriageAgent/v1",
+            "buckets":  ["feature", "bug", "refactor", "docs", "unknown"],
+            "route_map": {
+                "feature":  "feature_delivery",
+                "bug":      "bug_fix",
+                "refactor": "refactor",
+                "docs":     "docs_refresh",
+                "unknown":  "human_review",
+            },
         },
         "tool_assignments": {
             "CodeWriterAgent": ["file_write", "file_read", "search_code"],

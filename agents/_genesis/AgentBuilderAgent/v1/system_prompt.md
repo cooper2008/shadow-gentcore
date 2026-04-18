@@ -91,7 +91,9 @@ For each agent in architect_design.agent_roster, create three files:
 - llm_judge criteria with prompts and weights
 
 ### Stage 5: WRITE WORKFLOWS
-Convert architect_design.workflow_design into proper workflow YAML format.
+Loop over `architect_design.workflow_designs` (plural). For EACH entry write ONE file at `<domain>/workflows/<name>.yaml`. A real domain usually gets 4–8 workflows (feature_delivery, bug_fix, refactor, migration, docs_refresh, security_audit, perf_investigation, dep_upgrade, …).
+
+**Back-compat:** if the architect output contains only the deprecated singular `workflow_design`, treat it as `workflow_designs: [workflow_design]`. (The ManifestLoader normalises this automatically for you; do not crash when encountering the old shape.)
 
 For EACH step, use the agent's `harness` section from the architect's roster. Emit **every** field the architect set — the runtime supports the full menu and the gate can't enforce what the YAML doesn't contain:
 
@@ -156,9 +158,14 @@ budget:
 
 **Required when `on_fail: rollback` is used anywhere:** the target `rollback_to` step MUST appear in `reset_points`. Validate this before writing the file.
 
-#### Triage workflow (generated when the domain has ≥3 workflows)
+#### Triage workflow (generated when the domain has ≥2 workflows AND triage_design is present)
 
-If `architect_design.workflow_design` enumerates 3 or more workflows (e.g. feature_delivery + bug_fix + refactor), also emit a top-level `workflows/triage.yaml` that uses `TriageAgent` to classify the incoming task and dispatch via a router gate. Consumers call ONE endpoint (`/run`) and the triage workflow picks the right downstream workflow.
+If `len(architect_design.workflow_designs) >= 2` AND `architect_design.triage_design` is present, emit `workflows/triage.yaml` directly from the architect's `triage_design` block. This file is the single `POST /run` entry point for consumer projects — they call one endpoint and triage dispatches.
+
+Build the YAML **from `architect_design.triage_design` verbatim**, not by inferring from step counts:
+- `classifier_agent` → the `steps[0].agent`
+- `buckets` → the `classification_schema.enum` passed as input to the classifier
+- `route_map` → the `gate.routes` mapping
 
 ```yaml
 # workflows/triage.yaml  — single entry point for consumer projects
@@ -188,10 +195,10 @@ steps:
 ```
 
 Rules for emitting `triage.yaml`:
-1. Only generate when `len(architect_design.workflow_design.workflows) >= 3`.
-2. Include one `routes:` entry per other workflow in the domain (exclude `triage` itself).
-3. Always include an `unknown:` route that either dispatches to an escalation workflow or emits an explicit `escalate_human` gate.
-4. When `TriageAgent` is not in the `_shared/` catalog for some reason, synthesize a domain-specific one (`{domain}/TriageAgent/v1`) with `execution_mode: self_ask` and a `classification_schema` input drawn from the workflow names.
+1. Generate when `len(architect_design.workflow_designs) >= 2` AND `architect_design.triage_design` is present. Skip for single-workflow domains.
+2. `routes:` MUST equal `architect_design.triage_design.route_map` verbatim — no additions, no renaming.
+3. Every value in `routes:` must match a `name` in `architect_design.workflow_designs[]` OR be a well-known fallback (`human_review`, `triage_escalation`). If any route target is missing from the generated workflows, the build fails fast with a clear error.
+4. Always ensure an `unknown:` key exists in routes — if the architect didn't include one, append `unknown: human_review` and log a warning in `files_failed`.
 
 ### Stage 6: WRITE CONFIGS
 Create tool and compliance configuration files:
