@@ -156,6 +156,43 @@ budget:
 
 **Required when `on_fail: rollback` is used anywhere:** the target `rollback_to` step MUST appear in `reset_points`. Validate this before writing the file.
 
+#### Triage workflow (generated when the domain has ≥3 workflows)
+
+If `architect_design.workflow_design` enumerates 3 or more workflows (e.g. feature_delivery + bug_fix + refactor), also emit a top-level `workflows/triage.yaml` that uses `TriageAgent` to classify the incoming task and dispatch via a router gate. Consumers call ONE endpoint (`/run`) and the triage workflow picks the right downstream workflow.
+
+```yaml
+# workflows/triage.yaml  — single entry point for consumer projects
+name: triage_and_dispatch
+version: "1.0.0"
+description: "Classify an incoming task request and dispatch to the matching workflow"
+steps:
+  - name: classify
+    agent: _shared/TriageAgent/v1                  # or {domain}/TriageAgent/v1 if synthesized
+    description: "Classify the task into one of the domain's workflow buckets"
+    gate:
+      name: dispatch_gate
+      type: router                                 # dispatches on classification
+      condition: "classification != null"
+      # One route per workflow defined by the architect. The label on the
+      # LEFT must match one of TriageAgent's declared classification values
+      # (passed via the agent's `classification_schema` input).
+      routes:
+        feature:   feature_delivery                # → run workflows/feature_delivery.yaml
+        bug:       bug_fix
+        refactor:  refactor
+        migration: migration
+        # ... one entry per generated workflow
+        unknown:   human_review                    # fallback label
+      on_fail: escalate_human
+      max_retries: 0                               # don't retry a classification
+```
+
+Rules for emitting `triage.yaml`:
+1. Only generate when `len(architect_design.workflow_design.workflows) >= 3`.
+2. Include one `routes:` entry per other workflow in the domain (exclude `triage` itself).
+3. Always include an `unknown:` route that either dispatches to an escalation workflow or emits an explicit `escalate_human` gate.
+4. When `TriageAgent` is not in the `_shared/` catalog for some reason, synthesize a domain-specific one (`{domain}/TriageAgent/v1`) with `execution_mode: self_ask` and a `classification_schema` input drawn from the workflow names.
+
 ### Stage 6: WRITE CONFIGS
 Create tool and compliance configuration files:
 
