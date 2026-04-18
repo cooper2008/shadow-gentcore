@@ -24,8 +24,15 @@ _AGENT_OPTIONAL: frozenset[str] = frozenset({
 _WORKFLOW_REQUIRED: frozenset[str] = frozenset({"name", "steps"})
 _STEP_REQUIRED: frozenset[str] = frozenset({"name", "agent"})
 
-# Valid execution modes
-_VALID_MODES: frozenset[str] = frozenset({"react", "chain_of_thought", "plan_execute", "direct"})
+# Valid execution modes — must match ModeDispatcher._register_defaults
+_VALID_MODES: frozenset[str] = frozenset({
+    "react",
+    "chain_of_thought",
+    "plan_execute",
+    "self_ask",
+    "tree_of_thought",
+    "direct",
+})
 
 # Valid gate on_fail values
 _VALID_ON_FAIL: frozenset[str] = frozenset({

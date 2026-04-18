@@ -24,10 +24,14 @@ class ModeDispatcher:
         from harness.core.modes.react import ReActStrategy
         from harness.core.modes.plan_execute import PlanExecuteStrategy
         from harness.core.modes.chain_of_thought import ChainOfThoughtStrategy
+        from harness.core.modes.self_ask import SelfAskStrategy
+        from harness.core.modes.tree_of_thought import TreeOfThoughtStrategy
 
         self._strategy_registry["react"] = ReActStrategy
         self._strategy_registry["plan_execute"] = PlanExecuteStrategy
         self._strategy_registry["chain_of_thought"] = ChainOfThoughtStrategy
+        self._strategy_registry["self_ask"] = SelfAskStrategy
+        self._strategy_registry["tree_of_thought"] = TreeOfThoughtStrategy
 
     def register(self, name: str, strategy_cls: type[ExecutionStrategy]) -> None:
         """Register a custom execution strategy."""
