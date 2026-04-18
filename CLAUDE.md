@@ -14,6 +14,8 @@ agent-contracts ← shadow-gentcore ← agent-tools ← domain-* (e.g. acme-back
 - **RuleEngine**: 6-layer permission merge, hot-reloadable, platform rules non-negotiable
 - **AgentState lifecycle**: SPAWNING→READY→RUNNING→VALIDATING→COMPLETED/FAILED
 - **Self-healing DAGs**: gates + feedback_loops + retry_with_feedback + reset_points
+- **Multi-workflow per domain**: triage.yaml dispatches via router gate, one /run endpoint
+- **WorkflowResolver**: domain.yaml `workflows:` overrides auto-discovery (full|deltas|none)
 - **Model hints**: opt-in per-model nudges (`harness/providers/model_hints.py`)
 - **Architect v2** catalog-driven (default); **DryRun/SmokeTest** providers need no API key
 
