@@ -23,10 +23,9 @@ logger = logging.getLogger(__name__)
 
 
 # B5 — Architect v2 feature flag (audit §8 Phase 2d).
-# When GENTCORE_ARCHITECT_V2 is truthy, load_workflow rewrites any workflow
-# step referencing `_genesis/AgentArchitectAgent/v1` to the v2 catalog-driven
-# agent. Flag off = zero behaviour change; v1 remains the default until
-# domain owners opt in via env var or CLI flag.
+# v2 is the default — catalog-driven, knows about stage_defaults / capability
+# bindings / gate+feedback loop patterns. Set GENTCORE_ARCHITECT_V2=0 (or
+# false/no/off) to force v1 for debugging parity.
 _ARCHITECT_V2_ENV = "GENTCORE_ARCHITECT_V2"
 _ARCHITECT_V1_ID = "_genesis/AgentArchitectAgent/v1"
 _ARCHITECT_V2_ID = "_genesis/AgentArchitectAgent/v2"
@@ -34,7 +33,9 @@ _ARCHITECT_V2_ID = "_genesis/AgentArchitectAgent/v2"
 
 def _architect_v2_enabled() -> bool:
     raw = os.environ.get(_ARCHITECT_V2_ENV, "").strip().lower()
-    return raw in ("1", "true", "yes", "on")
+    if not raw:  # unset → default ON
+        return True
+    return raw not in ("0", "false", "no", "off")
 
 
 def _swap_architect_v1_to_v2(workflow: dict[str, Any]) -> dict[str, Any]:

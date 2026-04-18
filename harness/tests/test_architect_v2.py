@@ -129,12 +129,13 @@ class TestFeatureFlagSwap:
         path.write_text(yaml.dump(wf), encoding="utf-8")
         return path
 
-    def test_flag_off_keeps_v1(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_flag_unset_defaults_to_v2(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """v2 is now the default — unset flag loads the catalog-driven v2 agent."""
         monkeypatch.delenv("GENTCORE_ARCHITECT_V2", raising=False)
         loader = ManifestLoader()
         wf = loader.load_workflow(self._make_workflow(tmp_path))
         architect_step = next(s for s in wf["steps"] if s["name"] == "architect")
-        assert architect_step["agent"] == "_genesis/AgentArchitectAgent/v1"
+        assert architect_step["agent"] == "_genesis/AgentArchitectAgent/v2"
 
     def test_flag_on_swaps_to_v2(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("GENTCORE_ARCHITECT_V2", "1")
@@ -154,13 +155,22 @@ class TestFeatureFlagSwap:
             step = next(s for s in wf["steps"] if s["name"] == "architect")
             assert step["agent"] == "_genesis/AgentArchitectAgent/v2", f"failed for {truthy!r}"
 
-    def test_flag_false_values_stay_v1(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        for falsy in ("0", "false", "no", "", "disabled"):
+    def test_flag_false_values_force_v1(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Explicit falsy values are the opt-out path back to v1."""
+        for falsy in ("0", "false", "no", "off"):
             monkeypatch.setenv("GENTCORE_ARCHITECT_V2", falsy)
             loader = ManifestLoader()
             wf = loader.load_workflow(self._make_workflow(tmp_path))
             step = next(s for s in wf["steps"] if s["name"] == "architect")
             assert step["agent"] == "_genesis/AgentArchitectAgent/v1", f"failed for {falsy!r}"
+
+    def test_flag_empty_string_stays_default_v2(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Empty string is treated as unset → v2 default."""
+        monkeypatch.setenv("GENTCORE_ARCHITECT_V2", "")
+        loader = ManifestLoader()
+        wf = loader.load_workflow(self._make_workflow(tmp_path))
+        step = next(s for s in wf["steps"] if s["name"] == "architect")
+        assert step["agent"] == "_genesis/AgentArchitectAgent/v2"
 
     def test_no_architect_step_no_rewrite(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Workflows without the architect step are untouched even with flag on."""
