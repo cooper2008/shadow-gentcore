@@ -93,7 +93,8 @@ For each agent in architect_design.agent_roster, create three files:
 ### Stage 5: WRITE WORKFLOWS
 Convert architect_design.workflow_design into proper workflow YAML format.
 
-For EACH step, use the agent's `harness` section from the architect's roster:
+For EACH step, use the agent's `harness` section from the architect's roster. Emit **every** field the architect set — the runtime supports the full menu and the gate can't enforce what the YAML doesn't contain:
+
 ```yaml
 steps:
   - name: {step_name}
@@ -102,17 +103,58 @@ steps:
     description: "{step description}"
     gate:
       name: {step_name}_gate
-      condition: "{agent.harness.gate_condition}"    # from architect
-      on_fail: "{agent.harness.gate_on_fail}"        # retry, abort, degrade
-      max_retries: {agent.harness.max_retries}       # from architect
-      fallback_step: "{agent.harness.fallback_step}" # from architect
+      type: "{gate.type | default: standard}"        # standard | router | approval
+      condition: "{agent.harness.gate_condition}"    # e.g. "all_passed == true"
+      on_fail: "{agent.harness.gate_on_fail}"        # retry | retry_fresh | rollback | abort | degrade | escalate_human
+      max_retries: {agent.harness.max_retries}
+      fallback_step: "{agent.harness.fallback_step}"
+      rollback_to: "{agent.harness.rollback_to}"     # required when on_fail=rollback
+      timeout_seconds: {agent.harness.timeout_seconds}  # optional wall-clock cap
+
+      # router gates — omit otherwise
+      routes:
+        {classification_label}: {next_step_name}
+        {other_label}: {other_step}
+
+      # approval gates — omit otherwise
+      approval_message: "{what the human will see}"
 ```
 
-Also include:
-- feedback_loops from architect's design
-- reset_points at major checkpoints
-- budget from architect's workflow_design.budget
-- parallel_branches where agents can run concurrently
+Recovery-strategy cheat sheet:
+- `retry` — re-run the step with the failure injected as feedback. Default choice.
+- `retry_fresh` — re-run with a cleared context. Use when the retry loop compounds errors.
+- `rollback` — jump back to `rollback_to` (must be in `reset_points`) and re-run from there. Use for expensive-prerequisite failures.
+- `abort` — stop the workflow. Use for compliance / policy failures.
+- `degrade` — continue despite failure, annotate the step as degraded. Use for non-blocking quality checks.
+- `escalate_human` — surface for manual review (DIFFERENT from `type: approval` — `approval` pauses cleanly, `escalate_human` fails the workflow).
+
+Workflow-level primitives to also emit:
+
+```yaml
+# feedback loops — self-healing paths back to an upstream step
+feedback_loops:
+  - name: {loop_name}
+    from_step: {downstream_step}
+    to_step: {upstream_step}
+    condition: "{e.g. all_passed == false}"
+    max_iterations: {usually 2-3}
+
+# checkpoints for rollback
+reset_points: [{major_step_1}, {major_step_2}]
+
+# parallelism
+parallel_branches:
+  - agents: [{step_a}, {step_b}]
+    join_step: {merge_step}
+
+# budget (from architect.workflow_design.budget)
+budget:
+  max_total_tokens: {int}
+  max_per_agent_tokens: {int}
+  timeout_minutes: {int}
+```
+
+**Required when `on_fail: rollback` is used anywhere:** the target `rollback_to` step MUST appear in `reset_points`. Validate this before writing the file.
 
 ### Stage 6: WRITE CONFIGS
 Create tool and compliance configuration files:

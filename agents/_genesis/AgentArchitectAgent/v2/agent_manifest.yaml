@@ -130,9 +130,23 @@ output_schema:
             required: [gate_condition, gate_on_fail, max_retries, grading_threshold]
             properties:
               gate_condition: {type: string}
-              gate_on_fail: {type: string, enum: [retry, retry_fresh, abort, degrade, escalate_human]}
+              # Full recovery strategy set matching composition_engine.py.
+              # `rollback` jumps execution back to the step named in `rollback_to`
+              # and re-runs from there — use for expensive early steps.
+              gate_on_fail:
+                type: string
+                enum: [retry, retry_fresh, rollback, abort, degrade, escalate_human]
               max_retries: {type: integer}
               fallback_step: {type: string}
+              rollback_to:
+                type: string
+                description: >-
+                  Step name to roll back to when `gate_on_fail: rollback`.
+                  Required when gate_on_fail=rollback; ignored otherwise.
+              timeout_seconds:
+                type: integer
+                minimum: 1
+                description: "Wall-clock timeout per attempt. Surfaces as a gate failure when exceeded."
               grading_threshold: {type: number}
           # B5 additions — catalog-driven composition signal
           decision:
@@ -194,6 +208,30 @@ output_schema:
               after_step: {type: string}
               criteria: {type: string}
               blocking: {type: boolean}
+              # Gate type selects behaviour in CompositionEngine:
+              #   standard — pass/fail based on `criteria` (default)
+              #   router   — dispatch to the next step in `routes` by classifying output
+              #   approval — pause workflow, persist request, wait for human sign-off
+              type:
+                type: string
+                enum: [standard, router, approval]
+                default: standard
+              # For `type: router` — map classification label → next step name.
+              routes:
+                type: object
+                additionalProperties: {type: string}
+                description: >-
+                  Used when type=router. Keys are classification labels the
+                  agent emits; values are step names to dispatch to. Example:
+                  `{approved: deploy, rejected: refactor, needs_review: human_review}`.
+              # For `type: approval` — user-visible message + wait timeout.
+              approval_message:
+                type: string
+                description: "Shown to the human reviewer when type=approval."
+              timeout_seconds:
+                type: integer
+                minimum: 1
+                description: "Max seconds to wait (approval gates) or execute (standard gates)."
         feedback_loops:
           type: array
           items:
@@ -220,6 +258,16 @@ output_schema:
             max_total_tokens: {type: integer}
             max_per_agent_tokens: {type: integer}
             timeout_minutes: {type: integer}
+        reset_points:
+          type: array
+          description: >-
+            Step names that serve as rollback checkpoints. When a downstream
+            gate fails with `on_fail: rollback`, CompositionEngine clears
+            step_results from the reset point onwards and re-runs that layer.
+            Place reset points at major DAG boundaries (e.g. after "implement"
+            in a plan→implement→test→review DAG) so a single bad test run
+            doesn't force replanning from scratch.
+          items: {type: string}
     tool_assignments:
       type: object
       description: "Map of agent_name to list of tools assigned"

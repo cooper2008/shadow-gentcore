@@ -82,13 +82,40 @@ Before emitting your output, self-check:
 
 ## Execution Mode Defaults
 
-| Stage class | Default mode |
-|-------------|--------------|
-| Writers (CodeWriter, DocGenerator, MigrationAgent) | `plan_execute` |
-| Analyzers (SpecAnalyzer, Reviewer, Triage, Investigate) | `chain_of_thought` |
-| Scanners/Runners (TestRunner, Linter, Deploy, Execute) | `react` |
-| Retrievers (Retrieve, knowledge retrieval) | `react` |
-| Summarizers (Summarize, Report) | `chain_of_thought` |
+Five execution modes are implemented in `harness/core/modes/`. Pick the one that matches how the stage thinks, not what the stage does:
+
+| Stage class | Default mode | When to pick |
+|-------------|--------------|--------------|
+| Writers (CodeWriter, DocGenerator, MigrationAgent) | `plan_execute` | Multi-file output with interdependent steps; plan first, then execute. |
+| Scanners / Runners (TestRunner, Linter, Deploy, Execute, Retrieve) | `react` | Tool-heavy loops where each step's output decides the next tool call. |
+| Summarizers / Simple reviewers (Summarize, Report) | `chain_of_thought` | Single-pass reasoning, no tool loop. Cheapest mode. |
+| **Ambiguous-spec analyzers, clarification-seekers** | `self_ask` | Task underspecified — agent must ask itself clarifying questions before answering. Good for SpecAnalyzer on vague inputs, Triage when the signal is weak. |
+| **Branching planners, design exploration** | `tree_of_thought` | Multiple plausible approaches exist; you want the agent to generate several candidates and pick the best. Good for RefactorPlanner, architecture trade-off reviewers, novel-industry first-pass design. |
+
+Configuration tips:
+- `self_ask` accepts `max_rounds` (default 4). Lower for simple tasks, higher for multi-hop.
+- `tree_of_thought` accepts `num_branches` (default 3) and `selection: vote | first | longest` (default `vote`).
+- For every mode you can set `primary:` + `fallback:` — if the primary fails schema validation, the fallback is retried.
+
+## Self-Healing Primitives — When to Use Each
+
+The runtime supports the full recovery menu below. Emit these in `harness.gate_on_fail` per agent and in `workflow_design.gates[].type` / `workflow_design.reset_points`:
+
+| Primitive | Emit where | When to use |
+|-----------|------------|-------------|
+| `retry` | `gate_on_fail: retry` | Default. Re-run same step with failure injected as feedback. Max ~2 retries per gate. |
+| `retry_fresh` | `gate_on_fail: retry_fresh` | Agent went sideways and needs a clean context. Rare; use when follow-up prompts keep compounding the error. |
+| `rollback` | `gate_on_fail: rollback` + `harness.rollback_to: <step>` + `workflow_design.reset_points: [<step>]` | Expensive prerequisite steps you don't want to redo. Rolls back to the reset point and re-runs from there. |
+| `abort` | `gate_on_fail: abort` | Critical/compliance failures — stop the workflow; don't retry. |
+| `escalate_human` | `gate_on_fail: escalate_human` | Raise for human review. Workflow stops; a human resumes it after inspection. |
+| `degrade` / `fallback` | `gate_on_fail: degrade` | Soft failure — continue the workflow, annotate the step as degraded. |
+| **Router gate** | `gates: [{type: router, routes: {<label>: <step>}}]` | Output classifies into N buckets and next step depends on the bucket (approve→deploy, reject→refactor, needs-review→human). |
+| **Approval gate** | `gates: [{type: approval, approval_message: "..."}]` | Pause for human sign-off before a destructive or high-cost op. **Different from escalate_human** — approval pauses cleanly and resumes; escalate fails the workflow. |
+| **reset_points** | `workflow_design.reset_points: [<step>, ...]` | Major DAG boundaries. Required when any downstream gate uses `rollback`. |
+| **timeout_seconds** | `harness.timeout_seconds: <int>` or `gate.timeout_seconds: <int>` | Stages that could hang on a runaway loop. Typical: 300-600 for LLM-heavy agents, 60 for tool-only steps. |
+| **feedback_loops** | `workflow_design.feedback_loops: [{from, to, condition, max_iterations}]` | Quality gates that send work back for revision (test failure → implementer, review rejection → implementer). |
+
+Emit the minimum set that covers the workflow's actual failure modes — don't add primitives speculatively. If a gate's failure case is "the model emitted bad JSON", `retry` is enough. If it's "the compiler rejected the code", `rollback` to the implement step is appropriate.
 
 ## Remember
 
