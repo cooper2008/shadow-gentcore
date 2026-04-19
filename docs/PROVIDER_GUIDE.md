@@ -1,5 +1,8 @@
 # Provider Guide — connecting shadow-gentcore to any LLM backend
 
+> **Note:** This guide covers LLM provider credentials (API keys for Claude, OpenAI, Bedrock, etc.).
+> For service tool credentials (Jira, GitHub, Slack tokens), see [CREDENTIALS_GUIDE.md](CREDENTIALS_GUIDE.md).
+
 Every agent calls an LLM. This guide shows you how to route those calls through:
 
 - Anthropic native (Claude Opus / Sonnet / Haiku)
