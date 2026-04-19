@@ -1567,5 +1567,104 @@ def test_smoke(preflight_only: bool, keep: bool, domain_path: str | None, cross_
             click.echo(f"Kept: {tmp_dir}")
 
 
+@cli.group()
+def credentials() -> None:
+    """Credential management — validate, inspect, and debug service credentials."""
+
+
+def _build_cred_registry() -> Any:
+    """Load all service pack YAMLs into a CredentialRegistry."""
+    import yaml as _yaml
+    from harness.core.credential_registry import CredentialRegistry
+
+    registry = CredentialRegistry()
+    try:
+        import agent_tools
+        services_dir = Path(str(agent_tools.__file__)).parent / "packs" / "services"
+        if services_dir.is_dir():
+            for yaml_file in sorted(services_dir.glob("*.yaml")):
+                try:
+                    pack = _yaml.safe_load(yaml_file.read_text(encoding="utf-8")) or {}
+                    registry.register_tool_pack(pack)
+                except Exception:
+                    pass
+    except ImportError:
+        pass
+    return registry
+
+
+@credentials.command("status")
+@click.option("--agent", "agent_id", default=None, help="Show credentials for a specific agent ID")
+def cred_status(agent_id: str | None) -> None:
+    """Show credential resolution status for all service tools (or one agent)."""
+    registry = _build_cred_registry()
+    if agent_id:
+        # Look up the agent manifest and derive its required credentials
+        project_root = Path(__file__).resolve().parent.parent.parent
+        found = False
+        for manifest_path in project_root.rglob("agent_manifest.yaml"):
+            import yaml as _yaml
+            manifest = _yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+            if manifest.get("id") == agent_id:
+                reqs = registry.required_for_agent(manifest)
+                if not reqs:
+                    click.echo(f"Agent '{agent_id}' declares no tool credentials.")
+                    return
+                report = registry.validate([r.name for r in reqs], agent_id=agent_id)
+                click.echo(report.format_cli())
+                found = True
+                break
+        if not found:
+            click.echo(f"Agent '{agent_id}' not found.", err=True)
+            raise SystemExit(1)
+    else:
+        all_tools = registry.known_tools
+        if not all_tools:
+            click.echo("No tool credentials declared in service packs.")
+            return
+        report = registry.validate(all_tools)
+        click.echo(report.format_cli())
+
+
+@credentials.command("missing")
+def cred_missing() -> None:
+    """Exit non-zero if any required credential is unresolved (CI gate)."""
+    registry = _build_cred_registry()
+    all_tools = registry.known_tools
+    if not all_tools:
+        click.echo("No tool credentials declared.")
+        raise SystemExit(0)
+    report = registry.validate(all_tools)
+    if report.missing:
+        click.echo(report.format_cli(), err=True)
+        raise SystemExit(1)
+    click.echo(f"All {len(report.resolved)} credential(s) resolved.")
+
+
+@credentials.command("required")
+@click.argument("agent_id")
+def cred_required(agent_id: str) -> None:
+    """Show which credentials a specific agent requires."""
+    import yaml as _yaml
+    registry = _build_cred_registry()
+    project_root = Path(__file__).resolve().parent.parent.parent
+    for manifest_path in project_root.rglob("agent_manifest.yaml"):
+        manifest = _yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        if manifest.get("id") == agent_id:
+            reqs = registry.required_for_agent(manifest)
+            if not reqs:
+                click.echo(f"Agent '{agent_id}' requires no credentials.")
+                return
+            click.echo(f"Agent '{agent_id}' requires {len(reqs)} credential(s):")
+            for req in reqs:
+                status = "✓" if registry.resolve(req.name) else "✗"
+                click.echo(f"  {status} {req.name}")
+                if req.purpose:
+                    click.echo(f"      purpose: {req.purpose}")
+            return
+    click.echo(f"Agent '{agent_id}' not found in {project_root}/agents/", err=True)
+    raise SystemExit(1)
+
+
 if __name__ == "__main__":
     cli()

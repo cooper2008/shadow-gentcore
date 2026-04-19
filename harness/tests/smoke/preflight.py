@@ -115,6 +115,7 @@ class PreflightCheck:
         report.results.append(self._check_sibling_repo("agent-contracts"))
         report.results.append(self._check_sibling_repo("agent-tools"))
         report.results.append(self._check_acme_backend())
+        report.results.append(self._check_credentials_available())
 
         return report
 
@@ -251,6 +252,51 @@ class PreflightCheck:
             f"sibling_{repo_name}", CheckLevel.INFO,
             f"Sibling repo not found: ../{repo_name} (optional for smoke tests)",
         )
+
+    def _check_credentials_available(self) -> CheckResult:
+        """Validate that all required credentials for registered tool packs resolve."""
+        try:
+            import agent_tools
+            from harness.core.credential_registry import CredentialRegistry
+
+            packs_root = Path(str(agent_tools.__file__)).parent / "packs"
+            registry = CredentialRegistry()
+            services_dir = packs_root / "services"
+            if not services_dir.is_dir():
+                return CheckResult(
+                    "credentials_available", CheckLevel.SKIP,
+                    "No services pack directory found — credential check skipped",
+                )
+            import yaml
+            for yaml_file in services_dir.glob("*.yaml"):
+                try:
+                    pack_manifest = yaml.safe_load(yaml_file.read_text(encoding="utf-8")) or {}
+                    registry.register_tool_pack(pack_manifest)
+                except Exception:
+                    pass
+            all_tools = registry.known_tools
+            if not all_tools:
+                return CheckResult(
+                    "credentials_available", CheckLevel.INFO,
+                    "No tool credentials declared in service packs",
+                )
+            report = registry.validate(all_tools)
+            if report.ok:
+                return CheckResult(
+                    "credentials_available", CheckLevel.PASS,
+                    f"All tool credentials resolved ({len(report.resolved)} credentials)",
+                )
+            missing_names = ", ".join(r.name for r in report.missing)
+            return CheckResult(
+                "credentials_available", CheckLevel.WARN,
+                f"{len(report.missing)} credential(s) unresolved: {missing_names}",
+                detail="Set via: export NAME=value OR ~/.gentcore/credentials.json",
+            )
+        except ImportError as exc:
+            return CheckResult(
+                "credentials_available", CheckLevel.SKIP,
+                f"Credential check skipped ({exc})",
+            )
 
     def _check_acme_backend(self) -> CheckResult:
         """Check if acme-backend domain is reachable."""
