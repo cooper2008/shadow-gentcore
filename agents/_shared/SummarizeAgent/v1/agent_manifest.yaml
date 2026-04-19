@@ -1,0 +1,68 @@
+id: _shared/SummarizeAgent/v1
+stage: summarize
+domain: _shared
+pack: core
+category: cost-optimized
+version: "1.0.0"
+description: "Distills prior-step outputs into a concise stakeholder-appropriate report (postmortem, PR description, status update, executive summary). Context-driven — same agent writes AWS incident postmortems, sprint summaries, compliance reports."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: chain_of_thought
+tools:
+  - name: file_read
+    description: "Read prior step outputs, templates, standards"
+    pack: "toolpack://core/filesystem"
+  - name: file_write
+    description: "Write the report to the domain's reports/ directory"
+    pack: "toolpack://core/filesystem"
+permissions:
+  file_edit: allow
+  file_create: allow
+  shell_command: deny
+  network_access: deny
+input_schema:
+  type: object
+  required: [inputs]
+  properties:
+    inputs:
+      type: array
+      description: "Prior step outputs to summarise (Triage + Investigate + Execute/Respond typical)"
+      items: {type: object}
+    audience:
+      type: string
+      enum: [engineer, sre, customer, exec, compliance]
+      default: engineer
+    output_format:
+      type: string
+      enum: [markdown, slack, jira_comment, json]
+      default: markdown
+    output_path:
+      type: string
+      description: "Optional path to write the report; if omitted, returns inline only"
+    template_ref:
+      type: string
+      description: "Optional path to a template in context/reference/ to follow"
+output_schema:
+  type: object
+  required: [summary, key_findings]
+  properties:
+    summary:
+      type: string
+      description: "The full summary content (markdown or other format per input)"
+    report_path:
+      type: string
+      description: "Path written (only if output_path provided)"
+    key_findings:
+      type: array
+      items: {type: string}
+    action_items:
+      type: array
+      items:
+        type: object
+        properties:
+          item: {type: string}
+          owner: {type: string}
+          due: {type: string}
+metadata:
+  author: platform-team
+  tags: [shared, summarize, reporting, generic, reusable]

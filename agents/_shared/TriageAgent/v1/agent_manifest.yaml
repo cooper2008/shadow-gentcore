@@ -1,10 +1,10 @@
 id: _shared/TriageAgent/v1
+stage: analyze
 domain: _shared
 pack: core
 category: reasoning
 version: "1.0.0"
 description: "Incident / ticket / task triage — classifies severity + domain, picks next action, routes to the right downstream agent. Covers the Triage stage."
-stage: Triage
 system_prompt_ref: system_prompt.md
 grading_criteria_ref: grading_criteria.yaml
 execution_mode:

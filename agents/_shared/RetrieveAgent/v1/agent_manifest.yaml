@@ -1,0 +1,66 @@
+id: _shared/RetrieveAgent/v1
+stage: retrieve
+domain: _shared
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Retrieves relevant passages from the domain knowledge base (context/runbooks/, context/reference/, team docs) for a given query. Returns excerpts with source paths — no generation of new content. Enables RAG-style lookup from other agents."
+system_prompt_ref: system_prompt.md
+execution_mode:
+  primary: react
+  max_react_steps: 10
+tools:
+  - name: file_read
+    description: "Read candidate source files"
+    pack: "toolpack://core/filesystem"
+  - name: search_code
+    description: "Search by pattern across context/ and reference docs"
+    pack: "toolpack://core/search"
+  - name: search_files
+    description: "Discover candidate files by name/path"
+    pack: "toolpack://core/search"
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+input_schema:
+  type: object
+  required: [query]
+  properties:
+    query:
+      type: string
+      description: "Natural-language question or keyword set"
+    source_paths:
+      type: array
+      items: {type: string}
+      description: "Optional search scope (default: context/runbooks/ + context/reference/)"
+    max_excerpts:
+      type: integer
+      default: 5
+      minimum: 1
+      maximum: 20
+output_schema:
+  type: object
+  required: [excerpts, summary]
+  properties:
+    excerpts:
+      type: array
+      items:
+        type: object
+        required: [source_path, content]
+        properties:
+          source_path: {type: string}
+          line_start: {type: integer}
+          line_end: {type: integer}
+          content: {type: string}
+          relevance_score: {type: number, minimum: 0, maximum: 1}
+    sources_searched:
+      type: array
+      items: {type: string}
+    summary:
+      type: string
+      description: "One-paragraph synthesis across the retrieved excerpts (citation only — no new facts)"
+metadata:
+  author: platform-team
+  tags: [shared, retrieve, rag, generic, reusable]
