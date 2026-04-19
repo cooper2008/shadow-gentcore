@@ -21,17 +21,17 @@ tools:
   - name: list_dir
     description: "List directory contents"
     pack: "toolpack://core/search"
-  - name: shell_exec
-    description: "Run validation commands (e.g., ./ai validate)"
-    pack: "toolpack://core/shell"
+  - name: verify_genesis_output
+    description: "Run in-process genesis verification against a generated domain directory (replaces the legacy ./ai validate shell invocation)"
+    pack: "toolpack://core/filesystem"
 
 constraints:
-  read_only_except_shell: true
+  read_only: true
 
 permissions:
   file_edit: deny
   file_create: deny
-  shell_command: allow
+  shell_command: deny
   network_access: deny
 
 input_schema:
