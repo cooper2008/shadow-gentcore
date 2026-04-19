@@ -40,12 +40,22 @@ class AnthropicProvider(BaseProvider):
         self._max_tokens = max_tokens
         self._base_url = base_url
         self._auth_token = auth_token
-        # Timeout per LLM call. Defaults to ANTHROPIC_TIMEOUT env var (seconds)
-        # or 300s. Non-Anthropic-compat endpoints (GLM 5.1, MiniMax) often hang
-        # on long react loops; without a bounded timeout the SDK waits forever
-        # and genesis silently exits when the Python process is killed.
+        # Timeout per LLM call. Resolution order:
+        #   1. Explicit `timeout` constructor arg (wins)
+        #   2. ANTHROPIC_TIMEOUT env var
+        #   3. Per-model default from model_hints.get_model_timeout (GLM/
+        #      MiniMax/Gemini get 900s; Claude/OpenAI get 300s)
+        # Non-Anthropic-compat endpoints (GLM 5.1, MiniMax M2.7) often run
+        # 5-12 min per call on long react loops; without a bounded timeout
+        # the SDK waits forever and genesis silently exits.
         import os as _os
-        self._timeout = timeout if timeout is not None else float(_os.environ.get("ANTHROPIC_TIMEOUT", "300"))
+        from harness.providers.model_hints import get_model_timeout as _model_timeout
+        if timeout is not None:
+            self._timeout: float = float(timeout)
+        elif _os.environ.get("ANTHROPIC_TIMEOUT"):
+            self._timeout = float(_os.environ["ANTHROPIC_TIMEOUT"])
+        else:
+            self._timeout = _model_timeout(model)
         self._max_retries = max_retries if max_retries is not None else int(_os.environ.get("ANTHROPIC_MAX_RETRIES", "2"))
         self._client: Any = None
 

@@ -89,3 +89,47 @@ def get_model_hint(model_id: str | None) -> str:
         return GLM_HINT
 
     return ""
+
+
+# ── Per-model HTTP timeout hints ──────────────────────────────────────────
+#
+# Anthropic's SDK default is unbounded. We default to 300s (see AnthropicProvider).
+# Some Anthropic-compat vendors (GLM 5.1, MiniMax M2.7) run significantly
+# slower than Claude on long react loops — their single-call response time
+# can hit 5-12 min under tool_use with large prompts. Default 300s causes
+# false-positive timeouts in genesis; bump to 900s for those families so
+# real hangs still surface but healthy-but-slow calls complete.
+
+_TIMEOUT_SLOW_PROVIDERS = 900  # 15 min for GLM / MiniMax / Gemini-compat
+_TIMEOUT_DEFAULT = 300         # 5 min for Anthropic / OpenAI direct
+
+
+def get_model_timeout(model_id: str | None, default: float = _TIMEOUT_DEFAULT) -> float:
+    """Return the recommended HTTP timeout (seconds) for a model family.
+
+    Used by AnthropicProvider to pick a per-vendor default when no explicit
+    timeout is passed. Env var ANTHROPIC_TIMEOUT still wins over this if set.
+
+    Args:
+        model_id: the model identifier from provider.yaml (e.g. "glm-5.1",
+            "MiniMax-M2", "gemini-2.5-flash", "claude-sonnet-4-5-20250929").
+        default: fallback when the model doesn't match any known slow family.
+
+    Returns:
+        Timeout in seconds as a float.
+    """
+    m = (model_id or "").lower()
+    if not m:
+        return default
+
+    # Vendors observed to need >5min on long react loops
+    if m.startswith("glm-") or m.startswith("glm_"):
+        return _TIMEOUT_SLOW_PROVIDERS
+    if "m2.7" in m or m.startswith("minimax") or "abab" in m:
+        return _TIMEOUT_SLOW_PROVIDERS
+    if "gemini" in m:
+        return _TIMEOUT_SLOW_PROVIDERS
+    if "kimi" in m or "moonshot" in m:
+        return _TIMEOUT_SLOW_PROVIDERS
+
+    return default
