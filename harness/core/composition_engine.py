@@ -39,6 +39,51 @@ class ExecutionEvent(str, Enum):
     ERROR = "error"
 
 
+def validate_reset_points(
+    steps: list[dict[str, Any]],
+    reset_points: list[str],
+) -> None:
+    """Validate that every gate's rollback target is a declared reset_point.
+
+    Enforces the G-RST contract from FRAMEWORK_AUDIT_2026Q2: when a workflow
+    declares `reset_points: [...]`, every step gate that uses ``on_fail:
+    rollback`` or ``on_fail: fallback`` MUST point to one of those reset
+    points via either ``fallback_step`` or ``rollback_to``.
+
+    When ``reset_points`` is empty, the check is a no-op (backward compat).
+    """
+    if not reset_points:
+        return
+
+    allowed = set(reset_points)
+    errors: list[str] = []
+
+    for step in steps:
+        gate = step.get("gate")
+        if not gate:
+            continue
+        on_fail = gate.get("on_fail")
+        if on_fail not in ("rollback", "fallback"):
+            continue
+        target = gate.get("rollback_to") or gate.get("fallback_step")
+        if not target:
+            continue
+        if target not in allowed:
+            errors.append(
+                f"step {step.get('name', '?')!r} gate has "
+                f"on_fail={on_fail!r} with fallback_step={target!r}, but "
+                f"{target!r} is not in reset_points={sorted(allowed)}"
+            )
+
+    if errors:
+        raise ValueError(
+            "Workflow validation failed: "
+            + "; ".join(errors)
+            + ". Either add the missing step name to reset_points, or "
+            "remove the invalid fallback."
+        )
+
+
 class GateFailure(Exception):
     """Raised when a workflow gate check fails and action is abort."""
 
@@ -93,6 +138,8 @@ class CompositionEngine:
         # Accessible via get_step_metrics(step_name) or get_step_metrics()
         # for the full map.
         self._step_metrics: dict[str, dict[str, Any]] = {}
+        # Declared safe rollback targets; populated by the workflow loader.
+        self._reset_points: list[str] = []
 
     def register_feedback_loop(self, loop: Any) -> None:
         """Register a FeedbackLoop for cross-stage feedback."""
@@ -542,10 +589,12 @@ class CompositionEngine:
         if on_fail == "rollback":
             rollback_to = gate.get("rollback_to") or gate.get("fallback_step")
             if rollback_to and rollback_to in self._step_results:
+                is_reset_point = rollback_to in (self._reset_points or [])
                 self._execution_log.append({
                     "event": ExecutionEvent.GATE_ROLLBACK,
                     "gate": gate_name,
                     "rollback_to": rollback_to,
+                    "is_reset_point": is_reset_point,
                     "reason": f"Step '{step_name}' failed, rolling back to '{rollback_to}'",
                 })
                 # Clear results from rollback_to onwards
