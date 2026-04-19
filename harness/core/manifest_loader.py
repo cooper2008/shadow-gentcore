@@ -76,6 +76,26 @@ class ManifestLoader:
         # uses it to resolve agent directories in O(1) instead of scanning the
         # filesystem per step. Auto-created in boot_engine when omitted.
         self._registry = registry
+        # Credential registry — populated during boot_engine; None until then.
+        self._credential_registry: Any = None
+
+    @property
+    def credential_registry(self) -> Any:
+        """The CredentialRegistry built during the last boot_engine call."""
+        return self._credential_registry
+
+    @staticmethod
+    def resolve_required_credentials(
+        agent_manifest: dict[str, Any],
+        credential_registry: Any,
+    ) -> list[Any]:
+        """Derive the union set of credentials an agent needs from its declared tools.
+
+        Called at agent-load time so a fresh agent-tools update applies without
+        regenerating agent manifests. Builder keeps emitting only `tools: [...]`;
+        this method makes `required_credentials` derived, not hand-authored.
+        """
+        return credential_registry.required_for_agent(agent_manifest)
 
     # ------------------------------------------------------------------
     # Public API
@@ -354,17 +374,42 @@ class ManifestLoader:
                         pack_ref = (tool if isinstance(tool, str) else tool.get("pack", "")) or ""
                         if pack_ref.startswith("toolpack://") or pack_ref.startswith("tool://"):
                             pack_uris.append(pack_ref)
-            # Register HTTP adapters for resolved packs
+            # Register HTTP adapters for resolved packs + index into CredentialRegistry
+            from harness.core.credential_registry import CredentialRegistry
+            cred_registry = CredentialRegistry()
+            registered_tool_names: list[str] = []
             for uri in set(pack_uris):
                 pack = resolver.resolve_pack(uri) if uri.startswith("toolpack://") else None
                 if pack is None:
                     continue
+                # Index pack credentials into registry
+                pack_yaml_path = getattr(pack, "_source_path", None)
+                if pack_yaml_path and Path(pack_yaml_path).exists():
+                    try:
+                        pack_manifest = yaml.safe_load(Path(pack_yaml_path).read_text(encoding="utf-8")) or {}
+                        cred_registry.register_tool_pack(pack_manifest)
+                    except Exception as exc:
+                        logger.debug("Failed to index credentials for pack %s: %s", uri, exc)
                 for tool_uri in (pack.tools if hasattr(pack, "tools") else []):
                     tool_manifest = resolver.resolve_tool(tool_uri)
                     if tool_manifest and getattr(tool_manifest, "adapter_class", None) == "http_api":
                         adapter = _at.HTTPAPIToolAdapter(tool_manifest)
                         tool_name = tool_uri.replace("tool://", "")
                         tool_executor.register_adapter(tool_name, adapter)
+                        registered_tool_names.append(tool_name)
+            # Validate credentials — warn but don't block (additive, backward-compat)
+            if registered_tool_names:
+                report = cred_registry.validate(registered_tool_names)
+                if report.missing:
+                    missing_names = ", ".join(r.name for r in report.missing)
+                    logger.warning(
+                        "Missing credentials for registered tools: %s — "
+                        "set them via export or ~/.gentcore/credentials.json",
+                        missing_names,
+                    )
+                else:
+                    logger.debug("All tool credentials resolved (%d tools checked)", len(registered_tool_names))
+            self._credential_registry = cred_registry
         except Exception as exc:
             logger.debug("agent-tools integration unavailable, skipping toolpack registration: %s", exc)
 

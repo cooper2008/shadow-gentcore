@@ -130,53 +130,68 @@ def _http(fn: Any) -> HTTPServiceAdapter:
     return HTTPServiceAdapter(fn)
 
 
+def _get_cred(name: str) -> str:
+    """Resolve a credential via CredentialRegistry's EnvBackend.
+
+    Keeps all header helpers consistent with the registry abstraction so a
+    ChainedBackend (file / AWS / Vault) can be swapped in without touching
+    each header function individually.
+    """
+    try:
+        from harness.core.credential_backends import EnvBackend
+        value = EnvBackend().resolve(name)
+        return value if value is not None else ""
+    except Exception:
+        return os.environ.get(name, "")
+
+
 def _jira_headers() -> dict[str, str]:
     import base64
-    creds = f"{os.environ.get('JIRA_EMAIL', '')}:{os.environ.get('JIRA_API_TOKEN', '')}"
+    creds = f"{_get_cred('JIRA_EMAIL')}:{_get_cred('JIRA_API_TOKEN')}"
     auth = base64.b64encode(creds.encode()).decode()
     return {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
 
 
 def _confluence_headers() -> dict[str, str]:
     import base64
-    creds = f"{os.environ.get('CONFLUENCE_EMAIL', '')}:{os.environ.get('CONFLUENCE_API_TOKEN', '')}"
+    creds = f"{_get_cred('CONFLUENCE_EMAIL')}:{_get_cred('CONFLUENCE_API_TOKEN')}"
     auth = base64.b64encode(creds.encode()).decode()
     return {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
 
 
 def _slack_headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {os.environ.get('SLACK_BOT_TOKEN', '')}", "Content-Type": "application/json"}
+    return {"Authorization": f"Bearer {_get_cred('SLACK_BOT_TOKEN')}", "Content-Type": "application/json"}
 
 
 def _pd_headers() -> dict[str, str]:
-    return {"Authorization": f"Token token={os.environ.get('PAGERDUTY_API_TOKEN', '')}", "Content-Type": "application/json"}
+    return {"Authorization": f"Token token={_get_cred('PAGERDUTY_API_TOKEN')}", "Content-Type": "application/json"}
 
 
 def _dd_headers() -> dict[str, str]:
-    return {"DD-API-KEY": os.environ.get("DD_API_KEY", ""), "DD-APPLICATION-KEY": os.environ.get("DD_APP_KEY", "")}
+    return {"DD-API-KEY": _get_cred("DD_API_KEY"), "DD-APPLICATION-KEY": _get_cred("DD_APP_KEY")}
 
 
 def _linear_headers() -> dict[str, str]:
-    return {"Authorization": os.environ.get("LINEAR_API_KEY", ""), "Content-Type": "application/json"}
+    return {"Authorization": _get_cred("LINEAR_API_KEY"), "Content-Type": "application/json"}
 
 
 def _notion_headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {os.environ.get('NOTION_API_TOKEN', '')}", "Notion-Version": "2022-06-28", "Content-Type": "application/json"}
+    return {"Authorization": f"Bearer {_get_cred('NOTION_API_TOKEN')}", "Notion-Version": "2022-06-28", "Content-Type": "application/json"}
 
 
 def _shortcut_headers() -> dict[str, str]:
-    return {"Shortcut-Token": os.environ.get("SHORTCUT_API_TOKEN", ""), "Content-Type": "application/json"}
+    return {"Shortcut-Token": _get_cred("SHORTCUT_API_TOKEN"), "Content-Type": "application/json"}
 
 
 def _sonar_headers() -> dict[str, str]:
     import base64
-    creds = f"{os.environ.get('SONAR_TOKEN', '')}:"
+    creds = f"{_get_cred('SONAR_TOKEN')}:"
     auth = base64.b64encode(creds.encode()).decode()
     return {"Authorization": f"Basic {auth}"}
 
 
 def _codecov_headers() -> dict[str, str]:
-    return {"Authorization": f"token {os.environ.get('CODECOV_TOKEN', '')}"}
+    return {"Authorization": f"token {_get_cred('CODECOV_TOKEN')}"}
 
 
 # ---------------------------------------------------------------------------

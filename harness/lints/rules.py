@@ -211,7 +211,7 @@ class ArchitectureLinter:
             "Record", "Contract", "Manifest", "Definition", "Enum",
             "Policy", "Profile", "Loop", "Budget", "Config", "Step",
             "Limits", "Defaults", "Result", "Envelope", "Binding",
-            "Metadata", "Checkpoint", "Limit", "Override",
+            "Metadata", "Checkpoint", "Limit", "Override", "Requirement",
         )
 
         for py_file in contracts_dir.rglob("*.py"):
