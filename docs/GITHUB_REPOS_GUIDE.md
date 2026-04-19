@@ -202,7 +202,7 @@ deploy/cdk/             ← AWS ECS Fargate IaC
 acme-backend/
 ├── domain.yaml               ← name: acme-backend, industry: ecommerce
 ├── config/
-│   └── provider.yaml         ← model: claude-sonnet-4-6
+│   └── provider.yaml         ← model: claude-sonnet-4-5-20250929
 ├── src/acme_api/             ← FastAPI application code
 │   ├── main.py
 │   ├── models/
@@ -269,7 +269,7 @@ workspace_policy:
 ### config/provider.yaml (domain repo)
 ```yaml
 provider: anthropic              # anthropic | openai | bedrock
-model: claude-sonnet-4-6         # model ID
+model: claude-sonnet-4-5-20250929         # model ID
 max_tokens: 8192
 api_key_env: ANTHROPIC_API_KEY   # env var name — never put key here
 ```

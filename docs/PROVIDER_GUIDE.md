@@ -41,7 +41,7 @@ from harness.providers.anthropic_provider import AnthropicProvider
 
 provider = AnthropicProvider(
     api_key="sk-ant-...",            # or set ANTHROPIC_API_KEY
-    model="claude-sonnet-4-6",
+    model="claude-sonnet-4-5-20250929",
     max_tokens=8192,
 )
 ```

@@ -397,8 +397,8 @@ RunRecord {status, output, confidence, tokens_used, duration}
 
 | Provider | Auth | Model Default | Use Case |
 |----------|------|---------------|----------|
-| Anthropic | `ANTHROPIC_API_KEY` | claude-sonnet-4-6 | Default for all |
-| AWS Bedrock | `AWS_BEARER_TOKEN_BEDROCK` or IAM | claude-sonnet-4-6 on Bedrock | Higher environments |
+| Anthropic | `ANTHROPIC_API_KEY` | claude-sonnet-4-5-20250929 | Default for all |
+| AWS Bedrock | `AWS_BEARER_TOKEN_BEDROCK` or IAM | claude-sonnet-4-5-20250929 on Bedrock | Higher environments |
 | OpenAI | `OPENAI_API_KEY` | gpt-5.4 | Alternative |
 | Claude Code | Subscription (auto-detected) | claude-code-subscription | Local dev |
 | DryRun | None | dry-run | Testing (free) |

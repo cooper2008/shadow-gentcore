@@ -44,7 +44,7 @@ industry: ecommerce            # or fintech, healthcare, aws-ops, k8s-ops...
 
 provider:
   name: anthropic
-  model: claude-sonnet-4-6
+  model: claude-sonnet-4-5-20250929
   max_tokens: 8192
   api_key_env: ANTHROPIC_API_KEY
 
@@ -391,7 +391,7 @@ The `AnthropicProvider` accepts either:
 
 ```python
 # Standard (x-api-key header)
-provider = AnthropicProvider(api_key="sk-ant-...", model="claude-sonnet-4-6")
+provider = AnthropicProvider(api_key="sk-ant-...", model="claude-sonnet-4-5-20250929")
 
 # Bearer-token auth + alternate endpoint (Minimax, OpenRouter, Bedrock-compat...)
 provider = AnthropicProvider(
