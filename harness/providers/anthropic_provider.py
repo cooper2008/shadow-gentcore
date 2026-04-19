@@ -28,7 +28,7 @@ class AnthropicProvider(BaseProvider):
     def __init__(
         self,
         api_key: str = "",
-        model: str = "claude-sonnet-4-6-20250414",
+        model: str = "claude-sonnet-4-5-20250929",
         max_tokens: int = 4096,
         base_url: str | None = None,
         auth_token: str | None = None,

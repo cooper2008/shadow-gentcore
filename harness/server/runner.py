@@ -80,7 +80,7 @@ def _make_provider(domain_path: str, dry_run: bool = False) -> Any:
 
     cfg = _yaml.safe_load(provider_yaml.read_text(encoding="utf-8")) or {}
     provider_name = cfg.get("provider", "anthropic")
-    model = cfg.get("model", "claude-sonnet-4-6")
+    model = cfg.get("model", "claude-sonnet-4-5-20250929")
     max_tokens = int(cfg.get("max_tokens", 8192))
 
     # Validate api_key_env against allowlist to prevent secret exfiltration
