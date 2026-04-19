@@ -375,7 +375,7 @@ def _make_provider(dry_run: bool, provider_config_path: str | None = None, provi
             provider_cfg = raw
 
     provider_name = provider_cfg.get("provider", "anthropic")
-    model = provider_cfg.get("model", "glm-5.1")  # E2E-test override; revert to claude default after
+    model = provider_cfg.get("model", "claude-sonnet-4-5-20250929")
     max_tokens = int(provider_cfg.get("max_tokens", 8192))
     api_key_env = provider_cfg.get("api_key_env", "ANTHROPIC_API_KEY")
 
@@ -521,12 +521,19 @@ def run_agent(agent_id: str, task: str, domain_path: str, dry_run: bool, output_
 @click.argument("workflow_path")
 @click.option("--task", "task_json", default=None, help="Task input as JSON string")
 @click.option("--dry-run", is_flag=True, help="Run with mock provider (no API calls)")
-def run_workflow(workflow_path: str, task_json: str | None, dry_run: bool) -> None:
+@click.option("--domain", "domain_path", default=None, help="Path to the domain repo (used to resolve config/provider.yaml). When omitted, looks two directories above the workflow file.")
+def run_workflow(workflow_path: str, task_json: str | None, dry_run: bool, domain_path: str | None) -> None:
     """Run a workflow from a definition file.
 
     Example:
         ./ai run workflow examples/backend_fastapi/workflows/feature_endpoint.yaml \\
             --task '{"feature_description": "Add health endpoint"}' --dry-run
+
+    The --domain flag points at the domain repo so the workflow runner can
+    load its config/provider.yaml (model, max_tokens, api_key_env). Without
+    --domain, the runner infers the domain from the workflow file's parent-
+    parent directory (convention: <domain>/workflows/<name>.yaml). If no
+    provider.yaml is found, framework defaults are used.
     """
     from harness.core.manifest_loader import ManifestLoader
 
@@ -545,7 +552,20 @@ def run_workflow(workflow_path: str, task_json: str | None, dry_run: bool) -> No
             click.echo(f"Error: invalid JSON in --task: {e}", err=True)
             raise SystemExit(1)
 
-    provider = _make_provider(dry_run)
+    # Resolve domain's provider.yaml so domain-specific model + api_key_env are picked up.
+    # --domain wins; fallback: workflow file's <parent>/<parent>/ (convention).
+    provider_config_path: str | None = None
+    if domain_path:
+        candidate = Path(domain_path) / "config" / "provider.yaml"
+        if candidate.exists():
+            provider_config_path = str(candidate.resolve())
+    if provider_config_path is None:
+        # Convention: <domain>/workflows/<name>.yaml → domain is 2 dirs up
+        candidate = wf_file.resolve().parent.parent / "config" / "provider.yaml"
+        if candidate.exists():
+            provider_config_path = str(candidate)
+
+    provider = _make_provider(dry_run, provider_config_path=provider_config_path)
     loader = ManifestLoader()
     engine, workflow_data, step_configs = loader.boot_engine(
         wf_file, provider=provider, task_input=task_input,
@@ -557,7 +577,22 @@ def run_workflow(workflow_path: str, task_json: str | None, dry_run: bool) -> No
     click.echo(f"  steps: {len(workflow_data['steps'])}")
     click.echo()
 
-    result = asyncio.run(engine.execute_dag(workflow_data["steps"], step_configs))
+    # Stream step-by-step progress (matches genesis build)
+    _step_started_at: dict[str, float] = {}
+    def _progress(event: str, step: str, agent: str = "", detail: str = "") -> None:
+        import time as _t
+        if event == "step_started":
+            _step_started_at[step] = _t.monotonic()
+            click.echo(f"  → {step} ({agent}) — running...")
+        elif event == "step_completed":
+            elapsed = int(_t.monotonic() - _step_started_at.get(step, _t.monotonic()))
+            suffix = f" [{elapsed}s]" if elapsed else ""
+            click.echo(f"  ✓ {step}{suffix}")
+        elif event == "step_failed":
+            elapsed = int(_t.monotonic() - _step_started_at.get(step, _t.monotonic()))
+            click.echo(f"  ✗ {step} [{elapsed}s] — {detail}")
+
+    result = asyncio.run(engine.execute_dag(workflow_data["steps"], step_configs, progress_callback=_progress))
 
     click.echo(f"Status: {result['status']}")
     click.echo(f"Steps completed: {len(result['step_results'])}")
@@ -912,7 +947,8 @@ def genesis() -> None:
 @click.option("--team", "-t", default=None, help="Team name from workspace.yaml (framework dev mode)")
 @click.option("--domain", "domain_path", default=None, help="Path to domain repo containing domain.yaml (standalone mode)")
 @click.option("--discover", "-d", "discover_path", default=None, help="Directory to auto-discover sources")
-def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, dry_run: bool, team: str | None, domain_path: str | None, discover_path: str | None) -> None:
+@click.option("--yes", "-y", "auto_confirm", is_flag=True, help="Skip the interactive Proceed? prompt (also: GENTCORE_AUTO_CONFIRM=1)")
+def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, dry_run: bool, team: str | None, domain_path: str | None, discover_path: str | None, auto_confirm: bool) -> None:
     """Run the full genesis pipeline to build a domain.
 
     Standalone mode (domain repo, no workspace.yaml needed):
@@ -1081,7 +1117,11 @@ def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, d
             click.echo(f"\n  Genesis will run 7 agents using {pname}.")
             click.echo("  Estimated: ~7 LLM calls, ~50k-200k tokens.")
             click.echo("  Tip: use --dry-run to test without charges.\n")
-            if not click.confirm("  Proceed?", default=False):
+            # Auto-confirm via --yes flag or GENTCORE_AUTO_CONFIRM env var (for CI)
+            env_auto = os.environ.get("GENTCORE_AUTO_CONFIRM", "").strip().lower() in ("1", "true", "yes", "on")
+            if auto_confirm or env_auto:
+                click.echo("  Auto-confirming (--yes or GENTCORE_AUTO_CONFIRM).")
+            elif not click.confirm("  Proceed?", default=False):
                 click.echo("  Aborted.")
                 return
 
@@ -1119,7 +1159,22 @@ def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, d
         click.echo("  mode: dry-run (no API calls)")
     click.echo()
 
-    result = asyncio.run(engine.execute_dag(workflow_data["steps"], step_configs))
+    # Stream step-by-step progress so users see activity during 5+ min LLM calls
+    _step_started_at: dict[str, float] = {}
+    def _progress(event: str, step: str, agent: str = "", detail: str = "") -> None:
+        import time as _t
+        if event == "step_started":
+            _step_started_at[step] = _t.monotonic()
+            click.echo(f"  → {step} ({agent}) — running...", nl=True)
+        elif event == "step_completed":
+            elapsed = int(_t.monotonic() - _step_started_at.get(step, _t.monotonic()))
+            suffix = f" [{elapsed}s]" if elapsed else ""
+            click.echo(f"  ✓ {step}{suffix}")
+        elif event == "step_failed":
+            elapsed = int(_t.monotonic() - _step_started_at.get(step, _t.monotonic()))
+            click.echo(f"  ✗ {step} [{elapsed}s] — {detail}")
+
+    result = asyncio.run(engine.execute_dag(workflow_data["steps"], step_configs, progress_callback=_progress))
 
     click.echo(f"Status: {result['status']}")
     click.echo(f"Steps completed: {len(result['step_results'])}")
@@ -1133,6 +1188,11 @@ def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, d
         click.echo(f"  {step_name}: {status}")
         if output_preview:
             click.echo(f"    output: {output_preview}...")
+        # Surface the underlying error reason (e.g. LLM 404/429/401) when a step errored.
+        # Without this, users only saw `step: error` with no way to diagnose.
+        err = step_result.get("error") if isinstance(step_result, dict) else None
+        if err:
+            click.echo(f"    error: {str(err)[:400]}")
     click.echo()
 
     # Count files actually written

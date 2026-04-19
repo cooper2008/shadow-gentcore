@@ -802,6 +802,7 @@ class CompositionEngine:
         steps: list[dict[str, Any]],
         step_configs: dict[str, dict[str, Any]] | None = None,
         workflow_id: str | None = None,
+        progress_callback: Any = None,
     ) -> dict[str, Any]:
         """Execute workflow steps as a DAG with parallel branches.
 
@@ -815,9 +816,22 @@ class CompositionEngine:
                 already-completed steps.  Defaults to
                 ``"workflow-<epoch-ms>"`` (unique per invocation, meaning
                 no resume unless the caller supplies a stable id).
+            progress_callback: Optional `callable(event, step, agent, detail)`.
+                Called at step_start + step_completed + step_failed + gate_*
+                so long-running genesis/workflow runs can stream progress to
+                the CLI (rather than going silent for 5+ minutes in an LLM
+                call). When None, no progress output is emitted; the engine
+                still appends to self._execution_log as before.
         """
         step_configs = step_configs or {}
         step_map = {s["name"]: s for s in steps}
+
+        def _emit(event: str, step: str, agent: str = "", detail: str = "") -> None:
+            if progress_callback is not None:
+                try:
+                    progress_callback(event, step, agent, detail)
+                except Exception as exc:  # noqa: BLE001 — progress must never break execution
+                    logger.debug("progress_callback raised %s — continuing", exc)
 
         if workflow_id is None:
             workflow_id = f"workflow-{int(time.time() * 1000)}"
@@ -862,6 +876,7 @@ class CompositionEngine:
                     "agent": agent_id,
                     "layer": layers.index(layer),
                 })
+                _emit("step_started", step_name, agent_id)
 
                 tasks.append(
                     self._run_dag_step(
@@ -889,6 +904,7 @@ class CompositionEngine:
                         "step": step_name,
                         "error": str(result),
                     })
+                    _emit("step_failed", step_name, "", str(result)[:200])
                     return {
                         "step_results": dict(self._step_results),
                         "execution_log": list(self._execution_log),
@@ -896,6 +912,17 @@ class CompositionEngine:
                         "failed_step": step_name,
                         "error": str(result),
                     }
+                # Success path — the step's result is already in self._step_results
+                # (set by _run_dag_step). Emit a completion event with a short
+                # content preview so users see real progress during long runs.
+                step_result = self._step_results.get(step_name, {})
+                preview = ""
+                if isinstance(step_result, dict):
+                    raw = step_result.get("output") or step_result.get("content") or ""
+                    if isinstance(raw, dict):
+                        raw = raw.get("content", "") or raw.get("summary", "")
+                    preview = str(raw)[:120]
+                _emit("step_completed", step_name, "", preview)
 
         return {
             "step_results": dict(self._step_results),
