@@ -32,12 +32,21 @@ class AnthropicProvider(BaseProvider):
         max_tokens: int = 4096,
         base_url: str | None = None,
         auth_token: str | None = None,
+        timeout: float | None = None,
+        max_retries: int | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._max_tokens = max_tokens
         self._base_url = base_url
         self._auth_token = auth_token
+        # Timeout per LLM call. Defaults to ANTHROPIC_TIMEOUT env var (seconds)
+        # or 300s. Non-Anthropic-compat endpoints (GLM 5.1, MiniMax) often hang
+        # on long react loops; without a bounded timeout the SDK waits forever
+        # and genesis silently exits when the Python process is killed.
+        import os as _os
+        self._timeout = timeout if timeout is not None else float(_os.environ.get("ANTHROPIC_TIMEOUT", "300"))
+        self._max_retries = max_retries if max_retries is not None else int(_os.environ.get("ANTHROPIC_MAX_RETRIES", "2"))
         self._client: Any = None
 
     def _get_client(self) -> Any:
@@ -46,7 +55,10 @@ class AnthropicProvider(BaseProvider):
             try:
                 import os
                 import anthropic
-                client_kwargs: dict[str, Any] = {}
+                client_kwargs: dict[str, Any] = {
+                    "timeout": self._timeout,
+                    "max_retries": self._max_retries,
+                }
 
                 auth_token = self._auth_token or os.environ.get("ANTHROPIC_AUTH_TOKEN")
                 if auth_token:
