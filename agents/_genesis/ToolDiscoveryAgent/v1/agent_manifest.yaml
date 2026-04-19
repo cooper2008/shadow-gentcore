@@ -9,7 +9,11 @@ system_prompt_ref: system_prompt.md
 
 execution_mode:
   primary: react
-  max_react_steps: 15
+  # Reduced from 15 → 8. Tool-pack discovery is bounded work (read pack
+  # manifests, match against knowledge_map); 15 steps encouraged runaway
+  # loops that hit 45–129 min on slow vendors (GLM 5.1, MiniMax) without
+  # producing materially better output.
+  max_react_steps: 8
 
 tools:
   - name: file_read

@@ -194,9 +194,13 @@ class AgentRunner:
         task_id = self._get(task, "task_id", "unknown")
         trace_id = f"trace-{task_id}-{int(time.time())}"
 
-        # Budget setup
+        # Budget setup.
+        # Default bumped to 100K because Gemini 3.x thinking models burn 50–60K
+        # on thought tokens before producing output; the old 50K cap caused
+        # scan to fail at ~58K. Anthropic-compat vendors (GLM/MiniMax) commonly
+        # need 60–80K for multi-step react loops over tool pack manifests.
         budget = BudgetTracker(
-            max_tokens=self._get(task, "budget_tokens", 50000),
+            max_tokens=self._get(task, "budget_tokens", 100000),
             max_cost_usd=self._get(task, "budget_cost_usd", 2.0),
         )
 
