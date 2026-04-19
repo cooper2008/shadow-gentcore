@@ -1,4 +1,5 @@
 id: _shared/DocGeneratorAgent/v1
+stage: generate
 domain: _shared
 pack: core
 category: fast-codegen

@@ -1,4 +1,5 @@
 id: _shared/ComplianceCheckerAgent/v1
+stage: review
 domain: _shared
 pack: core
 category: compliance

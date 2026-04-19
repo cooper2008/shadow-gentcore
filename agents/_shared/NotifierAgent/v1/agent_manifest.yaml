@@ -1,4 +1,5 @@
 id: _shared/NotifierAgent/v1
+stage: respond
 domain: _shared
 pack: core
 category: cost-optimized

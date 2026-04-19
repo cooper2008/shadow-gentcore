@@ -1,4 +1,5 @@
 id: _shared/TestRunnerAgent/v1
+stage: execute
 domain: _shared
 pack: core
 category: ops

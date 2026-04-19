@@ -1,4 +1,5 @@
 id: _shared/RefactorPlannerAgent/v1
+stage: analyze
 domain: _shared
 pack: core
 category: reasoning
