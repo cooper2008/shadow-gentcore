@@ -118,6 +118,12 @@ class AnthropicProvider(BaseProvider):
             else:
                 chat_messages.append(msg)
 
+        # Strip framework-internal metadata (underscore-prefixed keys) from
+        # content blocks before handing to the Anthropic SDK. React mode may
+        # attach `_thought_signature` to tool_use blocks for Gemini round-trip;
+        # Anthropic's schema rejects unknown fields on ToolUseBlockParam.
+        chat_messages = _strip_internal_keys(chat_messages)
+
         # Model-specific prompt nudge (opt-in — empty for strong models)
         from harness.providers.model_hints import get_model_hint
         _hint = get_model_hint(model)
@@ -228,3 +234,25 @@ class AnthropicProvider(BaseProvider):
     @property
     def default_model(self) -> str:
         return self._model
+
+
+def _strip_internal_keys(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove underscore-prefixed keys from content blocks before sending.
+
+    Framework-internal metadata (e.g. `_thought_signature` for Gemini round-trip)
+    must not leak to the Anthropic SDK which validates against a strict schema.
+    """
+    out: list[dict[str, Any]] = []
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            out.append(msg)
+            continue
+        cleaned_blocks: list[Any] = []
+        for block in content:
+            if isinstance(block, dict):
+                cleaned_blocks.append({k: v for k, v in block.items() if not k.startswith("_")})
+            else:
+                cleaned_blocks.append(block)
+        out.append({**msg, "content": cleaned_blocks})
+    return out

@@ -20,7 +20,8 @@ only one that completed end-to-end with excellent code quality.
 | Provider | Final workflow status | Code quality | Notes |
 |----------|----------------------|--------------|-------|
 | **GLM 5.1** | ✓ COMPLETED | excellent | recommended |
-| Gemini 3 Flash | ⚠ prose on final (system-prompt hint helps) | good | works with H1 fix |
+| Gemini 3.1 Pro / 3 Flash | ✓ tool_use round-trip fixed 2026-04-19 | good | `thought_signature` now auto-preserved |
+| Gemini 2.5 Flash | ⚠ prose on final (system-prompt hint helps) | good | works with H1 fix |
 | MiniMax M2.7 | ⚠ flaky (system-prompt hint helps) | medium | inconsistent across runs |
 | Anthropic Claude 4.5 | ✓ COMPLETED (when account funded) | excellent | direct API |
 
@@ -41,6 +42,9 @@ calls and confuse the downstream output parser.
 | MiniMax | `abab7-chat-preview` (returns model: `MiniMax-M2.7`) | `https://api.minimax.io/anthropic` | ✓ 2026-04-19 |
 | Kimi (Moonshot) | `kimi-k2-turbo-preview` | `https://api.moonshot.cn/anthropic` | ⚠ key-dependent |
 | OpenAI | `gpt-4.1-mini` | `https://api.openai.com` | ✓ 2026-04-19 (auth + listing only) |
+| **Gemini 3 (flagship)** | `gemini-3.1-pro-preview` | `https://generativelanguage.googleapis.com/v1beta/openai` | ✓ 2026-04-19 tool_use + thought_signature |
+| Gemini 3 (flash) | `gemini-3-flash-preview` | same as above | ✓ 2026-04-19 |
+| Gemini 3 (lite) | `gemini-3.1-flash-lite-preview` | same as above | ✓ 2026-04-19 |
 
 ---
 

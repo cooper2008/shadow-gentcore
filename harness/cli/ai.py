@@ -389,8 +389,13 @@ def _make_provider(dry_run: bool, provider_config_path: str | None = None, provi
         api_key = os.environ.get(api_key_env, "")
         if api_key:
             from harness.providers.openai_provider import OpenAIProvider
-            click.echo(f"  provider: OpenAI API ({model})")
-            return OpenAIProvider(api_key=api_key, model=model, max_tokens=max_tokens)
+            # base_url lets provider.yaml point at Gemini's OpenAI-compat
+            # endpoint (https://generativelanguage.googleapis.com/v1beta/openai)
+            # or any other OpenAI-compatible vendor.
+            base_url = provider_cfg.get("base_url") or os.environ.get("OPENAI_BASE_URL")
+            suffix = f" via {base_url}" if base_url else ""
+            click.echo(f"  provider: OpenAI API ({model}){suffix}")
+            return OpenAIProvider(api_key=api_key, model=model, max_tokens=max_tokens, base_url=base_url)
     elif provider_name == "bedrock":
         from harness.providers.bedrock_provider import BedrockProvider
         region = provider_cfg.get("region", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))

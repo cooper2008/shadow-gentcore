@@ -148,11 +148,17 @@ class OpenAIProvider(BaseProvider):
         if openai_tools:
             create_kwargs["tools"] = openai_tools
 
-        # Force JSON mode whenever a schema is declared. Tool calls still
-        # work — the model can return tool_calls with empty content for
-        # intermediate steps, then emit JSON content on the final turn.
-        # (Gemini's OpenAI-compat + OpenAI native both support this.)
-        if output_schema:
+        # Force JSON mode whenever a schema is declared — BUT ONLY when
+        # no tools are declared. Gemini's OpenAI-compat endpoint rejects
+        # combining function calling (tools) with JSON response format:
+        #   "Function calling with a response mime type: 'application/json'
+        #    is unsupported" (HTTP 400 INVALID_ARGUMENT).
+        # OpenAI native permits the combination, but the framework runs
+        # the same code against Gemini-compat so the conservative path
+        # is to pick one or the other. When tools are present, the model
+        # can use tool_calls to emit structured output; system prompt
+        # hints (see model_hints.py) ensure final-reply JSON quality.
+        if output_schema and not openai_tools:
             create_kwargs["response_format"] = {"type": "json_object"}
 
         create_kwargs.update(kwargs)
@@ -164,13 +170,32 @@ class OpenAIProvider(BaseProvider):
 
         tool_calls = []
         if choice.message.tool_calls:
+            import json
+            # Gemini 3.x thinking models emit `thought_signature` on every
+            # tool-use response. The signature must be echoed back on the
+            # follow-up turn or the API rejects with HTTP 400 "Function call
+            # is missing a thought_signature in functionCall parts". Signature
+            # may appear at message-level (extra_content.google.thought_signature)
+            # or per-tool-call. We capture whichever is present; non-Gemini
+            # vendors never populate this → `sig` stays None → no-op.
+            msg_extra = getattr(choice.message, "extra_content", None) or {}
+            msg_sig = None
+            if isinstance(msg_extra, dict):
+                msg_sig = (msg_extra.get("google") or {}).get("thought_signature")
             for tc in choice.message.tool_calls:
-                import json
-                tool_calls.append({
+                tc_extra = getattr(tc, "extra_content", None) or {}
+                tc_sig = None
+                if isinstance(tc_extra, dict):
+                    tc_sig = (tc_extra.get("google") or {}).get("thought_signature")
+                sig = tc_sig or msg_sig
+                entry: dict[str, Any] = {
                     "id": tc.id,
                     "name": tc.function.name,
                     "arguments": json.loads(tc.function.arguments),
-                })
+                }
+                if sig:
+                    entry["_thought_signature"] = sig
+                tool_calls.append(entry)
 
         return LLMResponse(
             content=content,
@@ -235,14 +260,22 @@ class OpenAIProvider(BaseProvider):
                     if btype == "text":
                         text_parts.append(block.get("text", ""))
                     elif btype == "tool_use":
-                        tool_calls.append({
+                        tc_out: dict[str, Any] = {
                             "id": block.get("id", "call_0"),
                             "type": "function",
                             "function": {
                                 "name": block.get("name", ""),
                                 "arguments": _json.dumps(block.get("input", {})),
                             },
-                        })
+                        }
+                        # Echo Gemini 3.x thought_signature back on follow-up
+                        # turn. No-op for other vendors (field absent).
+                        sig = block.get("_thought_signature")
+                        if sig:
+                            tc_out["extra_content"] = {
+                                "google": {"thought_signature": sig}
+                            }
+                        tool_calls.append(tc_out)
                 new_msg: dict[str, Any] = {"role": "assistant"}
                 joined = "\n".join(p for p in text_parts if p)
                 if joined:

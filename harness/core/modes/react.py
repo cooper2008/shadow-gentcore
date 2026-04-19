@@ -229,12 +229,19 @@ class ReActStrategy(ExecutionStrategy):
             if content:
                 assistant_content.append({"type": "text", "text": content})
             for tc in tool_calls:
-                assistant_content.append({
+                block: dict[str, Any] = {
                     "type": "tool_use",
                     "id": tc.get("id", f"tool_{step_num}"),
                     "name": tc.get("name", ""),
                     "input": tc.get("arguments", tc.get("input", {})),
-                })
+                }
+                # Carry Gemini 3.x thought_signature across turns so the
+                # OpenAIProvider can echo it back. Non-Gemini tool_calls
+                # never set this → block stays identical to before.
+                sig = tc.get("_thought_signature")
+                if sig:
+                    block["_thought_signature"] = sig
+                assistant_content.append(block)
             current_messages.append({"role": "assistant", "content": assistant_content})
 
             # Execute tools and build tool_result message (Anthropic format)

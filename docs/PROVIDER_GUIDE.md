@@ -122,13 +122,17 @@ When `output_schema` is declared, the provider adds `response_format={"type": "j
 
 Point `OpenAIProvider` at the compatible endpoint:
 
-### Gemini 3 Flash
+### Gemini 3 (preview family)
+
+Flagship = `gemini-3.1-pro-preview` (most capable). Flash-tier = `gemini-3-flash-preview`
+(pro-level quality at flash speed). Lite = `gemini-3.1-flash-lite-preview` (cost-efficient
+high-volume). All are in preview per Google's [Gemini 3 docs](https://ai.google.dev/gemini-api/docs/gemini-3).
 
 ```python
 provider = OpenAIProvider(
     api_key="AIza...",            # Gemini API key
     base_url="https://generativelanguage.googleapis.com/v1beta/openai",
-    model="gemini-3-flash-preview",
+    model="gemini-3.1-pro-preview",   # flagship; swap for -flash-preview for speed
     max_tokens=4096,
 )
 ```
@@ -143,9 +147,9 @@ export OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
 **The framework automatically:**
 - Translates Anthropic-format tool schemas (`{name, input_schema}`) → OpenAI format (`{type: function, function: {name, parameters}}`)
 - Translates assistant `tool_use` blocks → `tool_calls` + `role: tool` messages
-- Forces `response_format={"type": "json_object"}` when a schema is declared
-
-**Known limitation:** Gemini 3 Pro (thinking) requires `thought_signature` in tool-call round trips — use Flash for tool-heavy workflows until a signature-preserving adapter ships.
+- Forces `response_format={"type": "json_object"}` when a schema is declared (and no tools)
+- **Preserves Gemini 3 `thought_signature`** across tool-use turns automatically — pro and flash
+  thinking variants both round-trip correctly. No adapter work needed by callers.
 
 ### DeepSeek
 
