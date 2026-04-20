@@ -64,6 +64,10 @@ def _build_preload_item(
         if not domain_root:
             return None
         return _preload_domain_context_docs(Path(domain_root))
+    if preload_name == "shared_stage_catalog":
+        return _preload_shared_stage_catalog()
+    if preload_name == "capabilities_config":
+        return _preload_capabilities_config()
     logger.warning("Unknown context.preload source: %r", preload_name)
     return None
 
@@ -123,6 +127,82 @@ def _preload_builtin_tools_inventory() -> dict[str, Any] | None:
     return {
         "source": "preload:shadow_gentcore_builtin_tools",
         "content": "".join(lines),
+        "priority": 5,
+    }
+
+
+def _preload_shared_stage_catalog() -> dict[str, Any] | None:
+    """Flatten every `agents/_shared/*/v*/agent_manifest.yaml` into a stage catalog.
+
+    Used by AgentArchitectAgent/v2 so it doesn't need to iteratively file_read
+    20+ stage-agent manifests during composition. Each entry carries
+    `id` (agent id path), `name`, `stage` tag, and `purpose` (from description).
+    """
+    framework_root = Path(__file__).resolve().parent.parent.parent
+    shared_root = framework_root / "agents" / "_shared"
+    if not shared_root.exists():
+        return None
+
+    entries: list[dict[str, Any]] = []
+    for mf_path in sorted(shared_root.glob("*/v*/agent_manifest.yaml")):
+        try:
+            data = yaml.safe_load(mf_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        aid = data.get("id") or f"_shared/{mf_path.relative_to(shared_root).parent}"
+        name = mf_path.parent.parent.name
+        meta = data.get("metadata") or {}
+        tags = meta.get("tags") or []
+        stage = meta.get("stage") or data.get("stage") or ""
+        if not stage:
+            # Heuristic: first uppercase tag is the stage (matches existing catalog convention)
+            for tag in tags if isinstance(tags, list) else []:
+                if isinstance(tag, str) and tag and tag[0].isupper():
+                    stage = tag
+                    break
+        purpose = (data.get("description") or "").strip().split("\n", 1)[0][:200]
+        entries.append({
+            "id": aid,
+            "name": name,
+            "stage": stage,
+            "purpose": purpose,
+        })
+
+    if not entries:
+        return None
+    lines = ["# Shared Stage Catalog (pre-loaded)\n"]
+    lines.append("Reuse these agents before synthesizing new ones. Columns: id | stage | name — purpose.\n\n")
+    for e in entries:
+        lines.append(f"- `{e['id']}` | stage=`{e['stage'] or '(unset)'}` | {e['name']} — {e['purpose']}\n")
+    return {
+        "source": "preload:shared_stage_catalog",
+        "content": "".join(lines),
+        "priority": 5,
+    }
+
+
+def _preload_capabilities_config() -> dict[str, Any] | None:
+    """Read framework `config/capabilities.yaml` verbatim.
+
+    Used by AgentArchitectAgent/v2 to map stage → capabilities → tool packs.
+    """
+    framework_root = Path(__file__).resolve().parent.parent.parent
+    cfg_path = framework_root / "config" / "capabilities.yaml"
+    if not cfg_path.exists():
+        return None
+    try:
+        body = cfg_path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    content = (
+        "# Capability Map (pre-loaded from config/capabilities.yaml)\n\n"
+        "```yaml\n"
+        f"{body}\n"
+        "```\n"
+    )
+    return {
+        "source": "preload:capabilities_config",
+        "content": content,
         "priority": 5,
     }
 
