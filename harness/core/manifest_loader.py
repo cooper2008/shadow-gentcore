@@ -38,6 +38,119 @@ def _architect_v2_enabled() -> bool:
     return raw not in ("0", "false", "no", "off")
 
 
+def _build_preload_item(
+    preload_name: str,
+    domain_root: str | Path | None = None,
+) -> dict[str, Any] | None:
+    """Build a context_items entry for a named preload source.
+
+    Supported sources:
+      * `tool_pack_catalog` — reads every YAML under `agent_tools/packs/`
+        and returns a flattened catalog the ToolDiscovery agent can consume
+        without iterative file_read calls.
+      * `shadow_gentcore_builtin_tools` — reads APPROVED_TOOLS from
+        harness/tools/builtin.py so discovery knows the native tool surface.
+      * `domain_context_docs` — all files under `{domain_root}/context/*.md`
+        flattened into one blob. Used by ContextEngineerAgent so it can
+        generate new context docs from existing ones in one shot.
+
+    Returns None if the source is unknown or produces no content.
+    """
+    if preload_name == "tool_pack_catalog":
+        return _preload_tool_pack_catalog()
+    if preload_name == "shadow_gentcore_builtin_tools":
+        return _preload_builtin_tools_inventory()
+    if preload_name == "domain_context_docs":
+        if not domain_root:
+            return None
+        return _preload_domain_context_docs(Path(domain_root))
+    logger.warning("Unknown context.preload source: %r", preload_name)
+    return None
+
+
+def _preload_tool_pack_catalog() -> dict[str, Any] | None:
+    """Flatten every tool pack YAML into a single indexed catalog blob."""
+    try:
+        import agent_tools
+        packs_root = Path(agent_tools.__file__).parent / "packs"
+    except Exception as exc:
+        logger.warning("agent_tools not importable for preload: %s", exc)
+        return None
+    if not packs_root.exists():
+        return None
+
+    parts: list[str] = ["# Available Tool Packs (pre-loaded catalog)\n"]
+    parts.append(
+        "Each pack declares one or more tools. Prefer these over fabricating "
+        "new ones. To include a pack, reference its `id:` (e.g. "
+        "`toolpack://core/filesystem`).\n\n"
+    )
+    for pack_yaml in sorted(packs_root.rglob("*.yaml")):
+        try:
+            data = yaml.safe_load(pack_yaml.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        pack_id = data.get("id") or f"toolpack://{pack_yaml.relative_to(packs_root).with_suffix('')}"
+        tools = data.get("tools") or []
+        tool_names = [t.get("name") if isinstance(t, dict) else str(t) for t in tools]
+        desc = (data.get("description") or "").strip().replace("\n", " ")[:200]
+        parts.append(f"## `{pack_id}`\n")
+        if desc:
+            parts.append(f"{desc}\n")
+        if tool_names:
+            parts.append(f"tools: {', '.join(filter(None, tool_names))}\n")
+        parts.append("\n")
+    content = "".join(parts)
+    return {
+        "source": "preload:tool_pack_catalog",
+        "content": content,
+        "priority": 5,
+    }
+
+
+def _preload_builtin_tools_inventory() -> dict[str, Any] | None:
+    """Inventory of framework-native tools registered by harness/tools/builtin.py."""
+    try:
+        from harness.tools import builtin as _builtin
+    except Exception:
+        return None
+    names = getattr(_builtin, "APPROVED_TOOLS", None)
+    if not names:
+        # Fallback: list public callables that look like tool helpers
+        names = [n for n in dir(_builtin) if not n.startswith("_")]
+    lines = ["# Framework Built-in Tools (harness/tools/builtin.py)\n\n"]
+    lines.extend(f"- `{n}`\n" for n in sorted(set(str(n) for n in names)))
+    return {
+        "source": "preload:shadow_gentcore_builtin_tools",
+        "content": "".join(lines),
+        "priority": 5,
+    }
+
+
+def _preload_domain_context_docs(domain_root: Path) -> dict[str, Any] | None:
+    """Concatenate every *.md under {domain_root}/context/ into one blob."""
+    ctx_dir = domain_root / "context"
+    if not ctx_dir.exists():
+        return None
+    parts: list[str] = ["# Domain Context Documents (pre-loaded)\n\n"]
+    files_found = False
+    for md_path in sorted(ctx_dir.rglob("*.md")):
+        try:
+            body = md_path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        rel = md_path.relative_to(domain_root)
+        parts.append(f"## File: `{rel}`\n\n{body}\n\n---\n\n")
+        files_found = True
+    if not files_found:
+        return None
+    return {
+        "source": "preload:domain_context_docs",
+        "content": "".join(parts),
+        "priority": 5,
+    }
+
+
 def _swap_architect_v1_to_v2(workflow: dict[str, Any]) -> dict[str, Any]:
     """Rewrite v1 Architect references to v2 when the feature flag is on.
 
@@ -202,6 +315,18 @@ class ManifestLoader:
                         "content": ctx_path.read_text(encoding="utf-8"),
                         "priority": 10,
                     })
+
+        # Pre-load bundled context sources declared in manifest.context.preload.
+        # These convert tool-driven agents (react-mode fetching local catalogs)
+        # into single-shot transform agents by baking the catalog into the
+        # prompt upfront. Critical for vendors that hang on multi-turn tool_use
+        # round-trips (MiniMax) and for eliminating 45-129min Layer 3 runs.
+        preload_names = agent_ctx.get("preload") if isinstance(agent_ctx, dict) else None
+        if preload_names:
+            for preload_name in preload_names:
+                item = _build_preload_item(preload_name, domain_root)
+                if item:
+                    context_items.append(item)
 
         # Load optional Python hooks referenced by hooks_ref field
         hooks: dict[str, Any] = {}

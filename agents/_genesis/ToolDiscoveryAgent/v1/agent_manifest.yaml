@@ -8,26 +8,22 @@ description: "Discovers what tools and systems a domain needs, matches against a
 system_prompt_ref: system_prompt.md
 
 execution_mode:
+  # Single-shot: tool_pack_catalog is pre-loaded into the prompt via
+  # context.preload, so the agent has everything it needs upfront. Avoids
+  # multi-turn tool_use round-trips that MiniMax's Anthropic-compat endpoint
+  # hangs on, and collapses 45–129 min discover_tools runs into ~30s.
   primary: react
-  # Reduced from 15 → 8. Tool-pack discovery is bounded work (read pack
-  # manifests, match against knowledge_map); 15 steps encouraged runaway
-  # loops that hit 45–129 min on slow vendors (GLM 5.1, MiniMax) without
-  # producing materially better output.
-  max_react_steps: 8
+  max_react_steps: 1
 
-tools:
-  - name: file_read
-    description: "Read tool pack definitions and config files"
-    pack: "toolpack://core/filesystem"
-  - name: search_files
-    description: "Find files by name pattern"
-    pack: "toolpack://core/search"
-  - name: list_dir
-    description: "List directory contents"
-    pack: "toolpack://core/search"
-  - name: search_code
-    description: "Search for tool definitions and patterns in source"
-    pack: "toolpack://core/search"
+# No tools declared — agent operates as a deterministic transform over the
+# pre-loaded tool_pack_catalog + builtin_tools inventory injected via
+# context.preload below.
+tools: []
+
+context:
+  preload:
+    - tool_pack_catalog
+    - shadow_gentcore_builtin_tools
 
 constraints:
   read_only: true

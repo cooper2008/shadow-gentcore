@@ -19,6 +19,12 @@ from __future__ import annotations
 # writing migrations from memory.
 MINIMAX_HINT = (
     "\n\n--- Model-specific guidance ---\n"
+    "When the output_schema is declared, call `submit_output` directly on "
+    "your FIRST turn — do not call intermediate tools unless you absolutely "
+    "must read new files. MiniMax's Anthropic-compat endpoint hangs on "
+    "multi-turn tool_use/tool_result round-trips; finishing in one turn "
+    "avoids this. If you already have enough context in the prompt, "
+    "produce the final JSON via submit_output immediately. "
     "After all tool calls finish, your FINAL reply must be a single JSON "
     "object matching the declared output_schema. No prose, no markdown "
     "fences, no explanation — JSON only. For Alembic migrations, the "

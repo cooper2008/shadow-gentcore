@@ -572,8 +572,13 @@ def run_workflow(workflow_path: str, task_json: str | None, dry_run: bool, domai
 
     provider = _make_provider(dry_run, provider_config_path=provider_config_path)
     loader = ManifestLoader()
+    # Thread --domain through so domain_root is correct for context preloads
+    # (e.g. ContextEngineerAgent's `domain_context_docs` reads the user's
+    # domain, not the framework root inferred from the workflow file path).
+    _domain_root = Path(domain_path) if domain_path else None
     engine, workflow_data, step_configs = loader.boot_engine(
         wf_file, provider=provider, task_input=task_input,
+        domain_root=_domain_root,
     )
 
     click.echo(f"Running workflow: {workflow_data['name']}")

@@ -8,21 +8,22 @@ description: "Generates high-quality context documents (standards.md, reference 
 system_prompt_ref: system_prompt.md
 
 execution_mode:
-  primary: plan_execute
-  fallback: react
-  max_react_steps: 15
-  max_plan_steps: 8
+  # Single-shot: domain_context_docs pre-loaded into prompt via
+  # context.preload. Agent is a deterministic transform from
+  # knowledge_map + existing docs → generated markdown. Multi-turn
+  # react hangs on MiniMax's Anthropic-compat endpoint; single-shot
+  # works uniformly across GLM/MiniMax/Gemini 3.x.
+  primary: react
+  max_react_steps: 1
 
-tools:
-  - name: file_read
-    description: "Read source files using content_ref paths from scanner inventory"
-    pack: "toolpack://core/filesystem"
-  - name: search_code
-    description: "Search source code for patterns, conventions, naming styles"
-    pack: "toolpack://core/search"
-  - name: list_dir
-    description: "List directory contents to discover file structure"
-    pack: "toolpack://core/search"
+# No tools — the pre-loaded domain context + knowledge_map input carry
+# everything the agent needs to produce standards.md / glossary.md /
+# reference docs / compliance_draft.
+tools: []
+
+context:
+  preload:
+    - domain_context_docs
 
 constraints:
   output_format: markdown_and_yaml

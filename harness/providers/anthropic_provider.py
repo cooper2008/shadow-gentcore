@@ -187,6 +187,28 @@ class AnthropicProvider(BaseProvider):
                         "arguments": block.input,
                     })
 
+        # MiniMax-compat fallback: MiniMax's Anthropic-compat endpoint emits
+        # tool calls as `<minimax:tool_call><invoke name="..."><parameter ...>`
+        # XML **inside text content** instead of proper Anthropic tool_use
+        # content blocks. When we see that marker and no structured tool_calls
+        # came back, extract and synthesize them. Non-MiniMax vendors never
+        # emit this marker → zero-impact no-op.
+        if not tool_calls and not submit_output_fired and "<minimax:tool_call>" in content:
+            synth_calls, synth_submit_json = _parse_minimax_tool_calls(
+                content, submit_output_enabled=forced_submit_output or coexist_submit_output,
+            )
+            if synth_submit_json is not None:
+                content = synth_submit_json
+                submit_output_fired = True
+            elif synth_calls:
+                tool_calls = synth_calls
+                # Strip the XML from content so downstream sees a clean message
+                import re as _re
+                content = _re.sub(
+                    r"<minimax:tool_call>[\s\S]*?</minimax:tool_call>\s*",
+                    "", content,
+                ).strip()
+
         if submit_output_fired:
             tool_calls = []
 
@@ -234,6 +256,68 @@ class AnthropicProvider(BaseProvider):
     @property
     def default_model(self) -> str:
         return self._model
+
+
+def _parse_minimax_tool_calls(
+    content: str,
+    submit_output_enabled: bool,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Extract MiniMax-style tool calls from response text.
+
+    MiniMax's Anthropic-compat endpoint emits tool calls as text XML:
+
+        <minimax:tool_call>
+        <invoke name="TOOL_NAME">
+        <parameter name="PARAM">VALUE</parameter>
+        ...
+        </invoke>
+        </minimax:tool_call>
+
+    VALUE is typically a JSON object/array serialized inline; sometimes a
+    plain string. This helper parses the XML-ish blob and returns synthesized
+    tool_call dicts compatible with the rest of the framework.
+
+    Returns:
+        (tool_calls, submit_output_json) — if the only invoke is
+        `submit_output` AND submit_output_enabled is True, returns
+        (empty list, merged-args JSON string) to mirror the native
+        submit_output completion path. Otherwise returns the extracted
+        tool_calls and None.
+    """
+    import re, json as _json
+
+    results: list[dict[str, Any]] = []
+    submit_args: dict[str, Any] | None = None
+
+    for invoke_match in re.finditer(
+        r'<invoke\s+name="([^"]+)">([\s\S]*?)</invoke>', content
+    ):
+        tool_name = invoke_match.group(1)
+        body = invoke_match.group(2)
+        args: dict[str, Any] = {}
+        for param_match in re.finditer(
+            r'<parameter\s+name="([^"]+)">([\s\S]*?)</parameter>', body
+        ):
+            key = param_match.group(1)
+            raw = param_match.group(2).strip()
+            # Try parsing as JSON first; fall back to raw string.
+            try:
+                args[key] = _json.loads(raw)
+            except (ValueError, TypeError):
+                args[key] = raw
+
+        if submit_output_enabled and tool_name == "submit_output":
+            submit_args = args
+        else:
+            results.append({
+                "id": f"minimax_{len(results)}",
+                "name": tool_name,
+                "arguments": args,
+            })
+
+    if submit_args is not None:
+        return [], _json.dumps(submit_args)
+    return results, None
 
 
 def _strip_internal_keys(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
