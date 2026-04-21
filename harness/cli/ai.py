@@ -1696,11 +1696,58 @@ def _build_cred_registry() -> Any:
 
 @credentials.command("status")
 @click.option("--agent", "agent_id", default=None, help="Show credentials for a specific agent ID")
-def cred_status(agent_id: str | None) -> None:
-    """Show credential resolution status for all service tools (or one agent)."""
+@click.option("--domain", "domain_path", default=None,
+              help="Scan all agents under a domain directory (shows per-agent × credential matrix)")
+def cred_status(agent_id: str | None, domain_path: str | None) -> None:
+    """Show credential resolution status for service tools.
+
+    Modes:
+      --agent <id>       one agent's required creds and whether they resolve
+      --domain <path>    every agent under that domain — table view
+      (neither)          every service pack credential known to the framework
+    """
     registry = _build_cred_registry()
+
+    if domain_path:
+        import yaml as _yaml
+        dp = Path(domain_path).expanduser().resolve()
+        agents_dir = dp / "agents"
+        if not agents_dir.is_dir():
+            click.echo(f"No agents/ directory under {dp}", err=True)
+            raise SystemExit(1)
+
+        rows: list[tuple[str, str, str, str]] = []
+        unique_creds: dict[str, str] = {}
+        for manifest_path in sorted(agents_dir.rglob("agent_manifest.yaml")):
+            try:
+                manifest = _yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+            except Exception:
+                continue
+            agent_name = manifest_path.parent.parent.name
+            reqs = registry.required_for_agent(manifest)
+            for r in reqs:
+                resolved = registry.resolve(r.name)
+                status = "✓" if resolved else ("✗ required" if r.required else "— optional")
+                rows.append((agent_name, r.name, status, r.purpose[:60]))
+                unique_creds[r.name] = status
+
+        if not rows:
+            click.echo(f"No agent under {dp} declares tool credentials.")
+            return
+
+        # Print per-agent × credential matrix
+        click.echo(f"\nCredential status for domain: {dp}\n")
+        click.echo(f"{'Agent':<28} {'Credential':<24} {'Status':<14} {'Purpose'}")
+        click.echo("-" * 120)
+        for row in rows:
+            click.echo(f"{row[0]:<28} {row[1]:<24} {row[2]:<14} {row[3]}")
+        missing_count = sum(1 for _, _, s, _ in rows if s.startswith("✗"))
+        click.echo(f"\n{len(unique_creds)} unique credentials, {missing_count} missing.")
+        if missing_count:
+            raise SystemExit(1)
+        return
+
     if agent_id:
-        # Look up the agent manifest and derive its required credentials
         project_root = Path(__file__).resolve().parent.parent.parent
         found = False
         for manifest_path in project_root.rglob("agent_manifest.yaml"):
