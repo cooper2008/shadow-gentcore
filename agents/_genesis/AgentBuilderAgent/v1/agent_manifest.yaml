@@ -12,23 +12,20 @@ description: >-
   coverage, use _factory/AgentFactoryAgent/v1 instead (see docs/FACTORY_VS_BUILDER.md).
 
 system_prompt_ref: system_prompt.md
+hooks_ref: hooks.py
 
 execution_mode:
-  primary: plan_execute
-  fallback: react
-  max_react_steps: 20
-  max_plan_steps: 12
+  # Single-shot emit-then-write: agent emits a `files: [{path, content}, ...]`
+  # array in one turn; the post_execute hook (hooks.py) writes each file to
+  # disk under {output_dir} and populates files_created/files_failed/
+  # build_quality. This eliminates multi-turn file_write tool_use that hangs
+  # on MiniMax/GLM Anthropic-compat endpoints — Builder used to run 20+ min
+  # and write zero files. Now: one LLM call, fast disk I/O, schema intact.
+  primary: react
+  max_react_steps: 1
 
-tools:
-  - name: file_write
-    description: "Write agent manifests, prompts, workflows, and config files"
-    pack: "toolpack://core/filesystem"
-  - name: file_read
-    description: "Read existing files and verify written output"
-    pack: "toolpack://core/filesystem"
-  - name: list_dir
-    description: "List directory contents for verification"
-    pack: "toolpack://core/search"
+# No tools — Builder emits structured JSON, hook writes files.
+tools: []
 
 constraints:
   output_format: yaml_and_markdown
@@ -66,39 +63,33 @@ input_schema:
       default: "."
 
 output_schema:
+  # Emit-then-write contract: the agent emits a `files` array containing the
+  # path + content for every file it wants created. The post_execute hook
+  # (hooks.py) writes them to disk and transforms this into the original
+  # schema (domain_dir/files_created/build_quality/…) that the build_gate
+  # evaluates. The agent itself never needs a file_write tool call.
   type: object
-  required: [domain_dir, files_created, build_quality]
+  required: [files, build_plan]
   properties:
-    domain_dir:
-      type: string
-      description: "Root directory of the created domain"
-    files_created:
+    files:
       type: array
-      items: {type: string}
-      description: "List of file paths successfully created"
-    files_failed:
-      type: array
+      description: "Every file the builder wants created. Paths are relative to output_dir (e.g. 'agents/TriageAgent/v1/agent_manifest.yaml'). Content is the full file body as a string."
       items:
         type: object
-        required: [path, error]
+        required: [path, content]
         properties:
-          path: {type: string}
-          error: {type: string}
-    agents_created:
-      type: array
-      items: {type: string}
-      description: "Names of agents whose files were created"
-    workflows_created:
-      type: array
-      items: {type: string}
-      description: "Names of workflows created"
-    build_quality:
+          path:
+            type: string
+            description: "Path relative to output_dir, or absolute"
+          content:
+            type: string
+            description: "Full file content"
+    build_plan:
       type: object
-      required: [files_planned, files_written, completion_pct]
+      required: [files_planned, rationale]
       properties:
-        files_planned: {type: integer}
-        files_written: {type: integer}
-        completion_pct: {type: number, minimum: 0, maximum: 100}
+        files_planned: {type: integer, description: "Total file count you intend to write — should equal len(files)"}
+        rationale: {type: string, description: "One-line summary of the build decisions"}
 
 grading_criteria_ref: grading_criteria.yaml
 

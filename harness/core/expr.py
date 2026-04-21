@@ -324,6 +324,9 @@ class _Parser:
 # ── Comparators ─────────────────────────────────────────────────────────────
 
 
+_STATUS_SYNONYMS = {"success", "completed", "ok", "done"}
+
+
 def _compare(left: Any, op: str, right: Any) -> bool:
     """Compare with output_validator's numeric-first-then-string semantics.
 
@@ -332,7 +335,18 @@ def _compare(left: Any, op: str, right: Any) -> bool:
     - None on either side: ordering ops (<, <=, >, >=) fail closed (False).
       Equality (==/!=) treats None as the literal string "none" — preserves
       composition_engine's legacy `<dotpath> == none` behaviour.
+    - Status-field synonymy: when both sides are status-success tokens
+      ({success, completed, ok, done}, case-insensitive), equality ops treat
+      them as synonyms. Matches the legacy composition_engine short-circuit
+      for bare `status == success`, but now works inside compound expressions
+      (e.g. `status == success and len(output.X) >= 3`) as well.
     """
+    if op in ("==", "!=") and left is not None and right is not None:
+        ls = str(left).strip().lower()
+        rs = str(right).strip().lower()
+        if ls in _STATUS_SYNONYMS and rs in _STATUS_SYNONYMS:
+            return (True if op == "==" else False)
+
     if left is None or right is None:
         if op not in ("==", "!="):
             return False  # ordering against None is undefined → fail-closed
