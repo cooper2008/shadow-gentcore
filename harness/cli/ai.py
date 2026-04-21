@@ -280,6 +280,64 @@ def validate(path: str, agent_dir: str | None, workflow_file: str | None, domain
         raise SystemExit(1)
 
 
+@cli.command("validate-contracts")
+@click.option("--domain", "domain_path", default=None,
+              help="Path to the domain directory (scans agents/**/agent_manifest.yaml).")
+@click.option("--agent", "agent_path", default=None,
+              help="Path to a single agent version directory or agent_manifest.yaml.")
+def validate_contracts(domain_path: str | None, agent_path: str | None) -> None:
+    """Validate that each agent's system_prompt matches its manifest contract.
+
+    Catches drift between what the prompt tells the LLM to do and what the
+    YAML manifest declares:
+
+    \b
+      * Prompt says "call `context_retrieve(...)`" but the tool is not in
+        manifest.tools[]
+      * Prompt says "emit `output.files`" but `files` is not in
+        output_schema.properties
+      * Prompt says "single-turn" but execution_mode.max_react_steps > 1
+      * Prompt refers to a preload source that is not in context.preload
+      * Prompt's "You are X" differs from manifest.id's short name
+
+    \b
+    Modes:
+        ai validate-contracts --domain /path/to/my-domain
+        ai validate-contracts --agent agents/TriageAgent/v1
+    """
+    from harness.core.prompt_contract_validator import (
+        validate_agent_contract,
+        validate_domain_contracts,
+    )
+
+    if not (domain_path or agent_path):
+        click.echo("Error: one of --domain or --agent is required.", err=True)
+        raise SystemExit(1)
+
+    if agent_path:
+        ap = Path(agent_path).expanduser().resolve()
+        manifest_path = ap / "agent_manifest.yaml" if ap.is_dir() else ap
+        if not manifest_path.exists():
+            click.echo(f"Not found: {manifest_path}", err=True)
+            raise SystemExit(1)
+        findings = validate_agent_contract(manifest_path)
+        if not findings:
+            click.echo(f"✓ {manifest_path.parent.parent.name} — contract aligned.")
+            return
+        click.echo(f"Contract check for {manifest_path}:")
+        for f in findings:
+            click.echo(f.format_line())
+        if any(f.severity == "error" for f in findings):
+            raise SystemExit(1)
+        return
+
+    dp = Path(domain_path).expanduser().resolve()
+    report = validate_domain_contracts(dp)
+    click.echo(report.format_cli())
+    if not report.passed:
+        raise SystemExit(1)
+
+
 @cli.command()
 @click.argument("path")
 def certify(path: str) -> None:
