@@ -103,6 +103,46 @@ def post_execute(manifest: Any, task: Any, result: Any) -> Any:
         except Exception as exc:
             failed.append({"pack_id": pack_id, "error": str(exc)[:200]})
 
+    # Phase B: run the static security scanner against every pack that
+    # was just emitted. In-memory scan (reads the pack_yaml we have in
+    # hand) so we don't depend on disk state and catch issues even when
+    # writes fail.
+    try:
+        from harness.core.tool_security_scanner import scan_packs
+        scan_input = [
+            (t.get("pack_id") or f"auto_{i}", t.get("pack_yaml") or "")
+            for i, t in enumerate(tools)
+            if isinstance(t, dict) and t.get("pack_yaml")
+        ]
+        scan_result = scan_packs(scan_input) if scan_input else None
+        if scan_result is not None:
+            security = {
+                "passed": scan_result.passed,
+                "packs_scanned": scan_result.packs_scanned,
+                "block_count": len(scan_result.blocks),
+                "warn_count": len(scan_result.warns),
+                "findings": [
+                    {
+                        "rule_id": f.rule_id,
+                        "severity": f.severity,
+                        "pack_id": f.pack_id,
+                        "location": f.location,
+                        "message": f.message,
+                    }
+                    for f in scan_result.findings
+                ],
+            }
+        else:
+            security = {"passed": True, "packs_scanned": 0, "findings": [],
+                        "note": "No packs emitted — nothing to scan."}
+    except Exception as exc:
+        # Scanner failure should NOT silently bless packs. Mark as blocked.
+        security = {
+            "passed": False,
+            "scanner_error": f"{type(exc).__name__}: {str(exc)[:200]}",
+            "findings": [],
+        }
+
     enriched = {
         "auto_dir": str(auto_dir),
         "packs_written": written,
@@ -112,11 +152,7 @@ def post_execute(manifest: Any, task: Any, result: Any) -> Any:
         "credentials_needed": output.get("credentials_needed", []),
         "classification": output.get("classification", {}),
         "build_plan": output.get("build_plan", {}),
-        "security_scan": {
-            "passed": True,    # Phase A default; Phase B's scanner will overwrite.
-            "issues": [],
-            "skipped": "Phase A — static scanner lands in Phase B",
-        },
+        "security_scan": security,
     }
 
     if isinstance(result, dict):

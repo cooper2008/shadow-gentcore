@@ -62,10 +62,11 @@ steps:
     description: "Synthesize new tool packs / MCP wrappers to close gaps"
     gate:
       name: synthesize_gate
-      # Allow this step to pass even if nothing needed synthesis (a pristine
-      # domain with 100% matched tools). Phase B will add a security_scan
-      # condition here to block risky emitted packs.
-      condition: "status == success"
+      # Phase B: enforce the static security scan. Gate passes iff the
+      # synthesis completed AND no `block`-severity findings were raised
+      # against any emitted pack. `warn` and `info` findings surface in
+      # the run record but don't stop the pipeline.
+      condition: "status == success and output.security_scan.passed == true"
       on_fail: degrade
 
   # Layer 4: Design
