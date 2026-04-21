@@ -1000,24 +1000,54 @@ def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, d
             "trusted": True,
         }
 
-        # Reference repos (optional, from domain.yaml)
-        if "reference" in domain_cfg:
-            refs = []
-            for ref in domain_cfg["reference"]:
-                if isinstance(ref, dict):
-                    p = Path(ref["path"])
-                    refs.append({"path": str(p if p.is_absolute() else (dp / p).resolve()), "label": ref.get("label", "")})
-                else:
-                    p = Path(ref)
-                    refs.append({"path": str(p if p.is_absolute() else (dp / p).resolve()), "label": ""})
-            team_config["reference"] = refs
+        # Reference / target / docs — each entry may be:
+        #   - a bare path string (local)
+        #   - {path: "..."} (local)
+        #   - {uri: "github://org/repo[@ref]", shard_filter?, credential?} (remote)
+        # Remote URIs are materialized to a local cache before passing to
+        # the scanner — see docs/SOURCE_ADAPTERS.md for schemes + auth.
+        def _resolve_one(entry: Any, kind: str) -> dict[str, Any]:
+            if isinstance(entry, dict) and entry.get("uri"):
+                from harness.core.source_adapters import resolve_source, SourceSpec
+                click.echo(f"  ↓ materializing {kind}: {entry['uri']}")
+                spec = SourceSpec(
+                    uri=entry["uri"],
+                    shard_filter=entry.get("shard_filter"),
+                    credential=entry.get("credential"),
+                )
+                try:
+                    resolved = asyncio.run(resolve_source(spec))
+                except Exception as exc:
+                    click.echo(f"  ✗ materialization failed: {exc}", err=True)
+                    raise SystemExit(1)
+                click.echo(f"  ✓ materialized → {resolved}")
+                out = {"path": str(resolved), "uri": entry["uri"]}
+                if entry.get("shard_filter"):
+                    out["shard_filter"] = entry["shard_filter"]
+                if entry.get("label"):
+                    out["label"] = entry["label"]
+                return out
+            # Local path fallback
+            raw = entry["path"] if isinstance(entry, dict) else entry
+            p = Path(raw)
+            resolved_path = p if p.is_absolute() else (dp / p).resolve()
+            out = {"path": str(resolved_path)}
+            if isinstance(entry, dict):
+                if entry.get("label"):
+                    out["label"] = entry["label"]
+                if entry.get("shard_filter"):
+                    out["shard_filter"] = entry["shard_filter"]
+            return out
 
-        # Target repos — default to src/ and tests/ in the domain repo
-        targets = []
+        # Reference (optional)
+        if "reference" in domain_cfg:
+            team_config["reference"] = [_resolve_one(r, "reference") for r in domain_cfg["reference"]]
+
+        # Target (defaults to src/ and tests/ in the domain repo)
+        targets: list[dict[str, Any]] = []
         if "target" in domain_cfg:
             for t in domain_cfg["target"]:
-                p = Path(t["path"] if isinstance(t, dict) else t)
-                targets.append({"path": str(p if p.is_absolute() else (dp / p).resolve())})
+                targets.append(_resolve_one(t, "target"))
         else:
             for subdir in ("src", "tests", "app", "lib"):
                 candidate = dp / subdir
@@ -1027,12 +1057,13 @@ def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, d
             targets.append({"path": str(dp)})
         team_config["target"] = targets
 
-        # Docs — default to docs/ and context/ if they exist
-        docs = []
+        # Docs (defaults to docs/, context/ if they exist)
+        docs: list[dict[str, Any]] = []
         if "docs" in domain_cfg:
             for d in domain_cfg["docs"]:
-                p = Path(d["path"] if isinstance(d, dict) else d)
-                docs.append({"path": str(p if p.is_absolute() else (dp / p).resolve()), "type": "documents"})
+                entry = _resolve_one(d, "docs")
+                entry["type"] = "documents"
+                docs.append(entry)
         else:
             for subdir in ("docs", "context", "documentation"):
                 candidate = dp / subdir
