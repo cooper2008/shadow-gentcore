@@ -153,6 +153,98 @@ class TestRegisterCustomAdapter:
             register_adapter(Bad)  # type: ignore[arg-type]
 
 
+class TestSkeletonAdapterUriParsers:
+    """Skeleton adapters don't fetch, but their URI parsers must work."""
+
+    def test_confluence_plain_space(self):
+        from harness.core.source_adapters.confluence import _parse_confluence_uri
+        assert _parse_confluence_uri("confluence://ENG") == {
+            "space_key": "ENG", "parent_id": None, "cql": None,
+        }
+
+    def test_confluence_with_parent(self):
+        from harness.core.source_adapters.confluence import _parse_confluence_uri
+        parsed = _parse_confluence_uri("confluence://ENG?parent=12345")
+        assert parsed["space_key"] == "ENG"
+        assert parsed["parent_id"] == "12345"
+
+    def test_confluence_malformed(self):
+        from harness.core.source_adapters.confluence import _parse_confluence_uri
+        with pytest.raises(ValueError):
+            _parse_confluence_uri("confluence://")
+
+    def test_notion_database(self):
+        from harness.core.source_adapters.notion import _parse_notion_uri
+        parsed = _parse_notion_uri("notion://databases/abc123")
+        assert parsed == {"kind": "databases", "id": "abc123"}
+
+    def test_notion_page(self):
+        from harness.core.source_adapters.notion import _parse_notion_uri
+        parsed = _parse_notion_uri("notion://pages/xyz789")
+        assert parsed["kind"] == "pages"
+
+    def test_notion_unknown_kind(self):
+        from harness.core.source_adapters.notion import _parse_notion_uri
+        with pytest.raises(ValueError):
+            _parse_notion_uri("notion://blocks/abc")
+
+    def test_jira_project(self):
+        from harness.core.source_adapters.jira import _parse_jira_uri
+        parsed = _parse_jira_uri("jira://ENG")
+        assert parsed == {"project_key": "ENG", "jql": None, "status_filter": None}
+
+    def test_jira_status_filter(self):
+        from harness.core.source_adapters.jira import _parse_jira_uri
+        parsed = _parse_jira_uri("jira://ENG?status=Done,In%20Review")
+        assert parsed["project_key"] == "ENG"
+        assert parsed["status_filter"] == ["Done", "In Review"]
+
+    def test_jira_custom_jql(self):
+        from harness.core.source_adapters.jira import _parse_jira_uri
+        parsed = _parse_jira_uri(
+            "jira://ENG?jql=project+%3D+ENG+AND+updated+%3E%3D+-30d"
+        )
+        assert "updated" in (parsed["jql"] or "")
+
+
+class TestSkeletonAdaptersRaiseHelpfully:
+    """Skeletons must raise NotImplementedError with an actionable message."""
+
+    @pytest.mark.asyncio
+    async def test_confluence_raises_with_pointer(self, tmp_path, monkeypatch):
+        from harness.core.source_adapters.confluence import ConfluenceAdapter
+        monkeypatch.setenv("CONFLUENCE_BASE_URL", "x")
+        monkeypatch.setenv("CONFLUENCE_EMAIL", "x")
+        monkeypatch.setenv("CONFLUENCE_API_TOKEN", "x")
+        adapter = ConfluenceAdapter()
+        with pytest.raises(NotImplementedError, match="skeleton"):
+            await adapter.materialize(
+                SourceSpec(uri="confluence://ENG"),
+                {"CONFLUENCE_BASE_URL": "x", "CONFLUENCE_EMAIL": "x", "CONFLUENCE_API_TOKEN": "x"},
+                tmp_path,
+            )
+
+    @pytest.mark.asyncio
+    async def test_notion_raises_with_pointer(self, tmp_path):
+        from harness.core.source_adapters.notion import NotionAdapter
+        with pytest.raises(NotImplementedError, match="skeleton"):
+            await NotionAdapter().materialize(
+                SourceSpec(uri="notion://databases/abc"),
+                {"NOTION_API_KEY": "x"},
+                tmp_path,
+            )
+
+    @pytest.mark.asyncio
+    async def test_jira_raises_with_pointer(self, tmp_path):
+        from harness.core.source_adapters.jira import JiraAdapter
+        with pytest.raises(NotImplementedError, match="skeleton"):
+            await JiraAdapter().materialize(
+                SourceSpec(uri="jira://ENG"),
+                {"JIRA_BASE_URL": "x", "JIRA_EMAIL": "x", "JIRA_API_TOKEN": "x"},
+                tmp_path,
+            )
+
+
 class TestGitHubAdapterMocked:
     @pytest.mark.asyncio
     async def test_invalid_ref_raises_filenotfound(self, tmp_path, monkeypatch):
