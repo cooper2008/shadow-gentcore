@@ -61,14 +61,19 @@ class TestGenesisWorkflowStructure:
     def test_evolve_workflow_exists(self) -> None:
         assert GENESIS_EVOLVE_WORKFLOW.exists()
 
-    def test_build_workflow_has_7_steps(self) -> None:
+    def test_build_workflow_has_8_steps(self) -> None:
+        # Grew from 7→8 when synthesize_tools (Phase A) was added between
+        # discover_tools and architect.
         wf = load_workflow(GENESIS_BUILD_WORKFLOW)
-        assert len(wf["steps"]) == 7
+        assert len(wf["steps"]) == 8
 
     def test_build_workflow_step_names(self) -> None:
         wf = load_workflow(GENESIS_BUILD_WORKFLOW)
         names = [s["name"] for s in wf["steps"]]
-        assert names == ["scan", "map", "discover_tools", "engineer_context", "architect", "build", "validate"]
+        assert names == [
+            "scan", "map", "discover_tools", "engineer_context",
+            "synthesize_tools", "architect", "build", "validate",
+        ]
 
     def test_build_workflow_all_steps_have_agents(self) -> None:
         wf = load_workflow(GENESIS_BUILD_WORKFLOW)
@@ -91,12 +96,14 @@ class TestGenesisWorkflowStructure:
         assert "map" in layers[1]
         # Layer 2: discover_tools + engineer_context (PARALLEL, both depend on map)
         assert set(layers[2]) == {"discover_tools", "engineer_context"}
-        # Layer 3: architect (depends on map, discover_tools, engineer_context)
-        assert "architect" in layers[3]
-        # Layer 4: build
-        assert "build" in layers[4]
-        # Layer 5: validate
-        assert "validate" in layers[5]
+        # Layer 3: synthesize_tools (depends on discover_tools + map)
+        assert "synthesize_tools" in layers[3]
+        # Layer 4: architect (depends on map, discover_tools, synthesize_tools, engineer_context)
+        assert "architect" in layers[4]
+        # Layer 5: build
+        assert "build" in layers[5]
+        # Layer 6: validate
+        assert "validate" in layers[6]
 
     def test_build_workflow_has_feedback_loops(self) -> None:
         wf = load_workflow(GENESIS_BUILD_WORKFLOW)
@@ -192,9 +199,12 @@ class TestGenesisPipelineExecution:
         assert result["status"] == "completed"
 
     @pytest.mark.asyncio
-    async def test_all_7_steps_executed(self) -> None:
+    async def test_all_steps_executed(self) -> None:
         result = await run_genesis_pipeline(GENESIS_BUILD_WORKFLOW)
-        expected = {"scan", "map", "discover_tools", "engineer_context", "architect", "build", "validate"}
+        expected = {
+            "scan", "map", "discover_tools", "engineer_context",
+            "synthesize_tools", "architect", "build", "validate",
+        }
         assert set(result["step_results"].keys()) == expected
 
     @pytest.mark.asyncio
@@ -208,8 +218,10 @@ class TestGenesisPipelineExecution:
         # map must be before discover_tools and engineer_context
         assert started.index("map") < started.index("discover_tools")
         assert started.index("map") < started.index("engineer_context")
-        # discover_tools and engineer_context before architect
-        assert started.index("discover_tools") < started.index("architect")
+        # synthesize_tools runs after discover_tools (its primary input)
+        assert started.index("discover_tools") < started.index("synthesize_tools")
+        # all layer-3 steps complete before architect
+        assert started.index("synthesize_tools") < started.index("architect")
         assert started.index("engineer_context") < started.index("architect")
         # architect before build
         assert started.index("architect") < started.index("build")
@@ -222,12 +234,12 @@ class TestGenesisPipelineExecution:
         result = await run_genesis_pipeline(GENESIS_BUILD_WORKFLOW)
         # map depends on scan — map's result should exist
         assert "map" in result["step_results"]
-        # architect depends on map, discover_tools, engineer_context
+        # architect depends on map, discover_tools, synthesize_tools, engineer_context
         assert "architect" in result["step_results"]
         # The execution log should show dep injection
         log = result["execution_log"]
         step_started_events = [e for e in log if e.get("event") == "step_started"]
-        assert len(step_started_events) == 7
+        assert len(step_started_events) == 8
 
     @pytest.mark.asyncio
     async def test_scan_workflow_completes(self) -> None:

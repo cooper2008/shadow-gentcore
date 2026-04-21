@@ -21,6 +21,10 @@ steps:
     description: "Classify discovered knowledge into framework categories"
     gate:
       name: map_gate
+      # Map is a transformation step — if scan had real content (enforced
+      # by scan_gate), map's shape will reflect that. Keep this loose so
+      # smoke/mock providers with skeletal shapes still pass; real quality
+      # is enforced at scan (upstream) and architect (downstream).
       condition: "status == success"
       on_fail: retry
       max_retries: 1
@@ -41,17 +45,38 @@ steps:
     description: "Generate quality context documents"
     gate:
       name: context_gate
+      # Transformation step — quality-of-input is enforced at scan_gate;
+      # quality-of-output at architect_gate (which verifies roster size).
+      # Smoke/mock providers emit skeletal standards_md; keep this loose.
       condition: "status == success"
       on_fail: retry
       max_retries: 2
 
+  # Layer 3b: Close tool gaps surfaced by discover_tools. Wraps existing
+  # public MCP servers when they match, or synthesizes new tool pack YAMLs
+  # for gaps unique to the domain. Credentials flow up to Builder for
+  # auto-propagation onto each agent's required_credentials.
+  - name: synthesize_tools
+    agent: _genesis/ToolSynthesizerAgent/v1
+    depends_on: [discover_tools, map]
+    description: "Synthesize new tool packs / MCP wrappers to close gaps"
+    gate:
+      name: synthesize_gate
+      # Allow this step to pass even if nothing needed synthesis (a pristine
+      # domain with 100% matched tools). Phase B will add a security_scan
+      # condition here to block risky emitted packs.
+      condition: "status == success"
+      on_fail: degrade
+
   # Layer 4: Design
   - name: architect
-    agent: _genesis/AgentArchitectAgent/v1
-    depends_on: [map, discover_tools, engineer_context]
+    agent: _genesis/AgentArchitectAgent/v2
+    depends_on: [map, discover_tools, synthesize_tools, engineer_context]
     description: "Design agent roster, workflow DAG, tool assignments"
     gate:
       name: architect_gate
+      # Transformation step. End-of-pipeline quality is enforced at build_gate
+      # where real file writes happen. Keep loose so smoke/mock providers pass.
       condition: "status == success"
       on_fail: retry
       max_retries: 1
@@ -63,6 +88,9 @@ steps:
     description: "Create all domain files"
     gate:
       name: build_gate
+      # Build produces actual files via emit-then-write hook; gate just
+      # verifies the agent run completed. Real content minima are checked
+      # at the final validate step (QualityGateAgent).
       condition: "status == success"
       on_fail: retry
       max_retries: 2

@@ -1,0 +1,126 @@
+id: _genesis/ToolSynthesizerAgent/v1
+domain: _genesis
+pack: core
+category: fast-codegen
+version: "1.0.0"
+description: >-
+  Closes tool gaps from ToolDiscoveryAgent by (a) wrapping an existing
+  public MCP server, or (b) synthesizing a new tool pack YAML from
+  scratch. Emits `credentials_needed` so Builder can auto-propagate
+  per-agent requirements. Phase A: emit + write only. Security scanning
+  is Phase B and runs via a separate gate.
+
+system_prompt_ref: system_prompt.md
+hooks_ref: hooks.py
+
+execution_mode:
+  # Single-shot emit-then-write — same pattern as Builder + architect:
+  # the catalog of known MCP servers + the security policy are
+  # pre-loaded into context, so the agent can make decisions in one
+  # turn without iterative file_read.
+  primary: react
+  max_react_steps: 1
+
+tools: []
+
+context:
+  preload:
+    - tool_pack_catalog           # existing packs — do not duplicate
+    - known_mcp_servers           # public MCP registry — prefer these
+    - tool_security_policy        # what patterns are allowed
+
+input_schema:
+  type: object
+  required: [gaps, knowledge_map]
+  properties:
+    gaps:
+      type: array
+      description: "Tool gaps surfaced by ToolDiscoveryAgent."
+      items:
+        oneOf:
+          - type: string    # bare gap name
+          - type: object
+            required: [name]
+            properties:
+              name: {type: string}
+              purpose: {type: string}
+              context: {type: string}
+    knowledge_map:
+      type: object
+      description: "Full knowledge_map from KnowledgeMapperAgent."
+    industry:
+      type: string
+      description: "Industry context for integration recommendations."
+    domain_path:
+      type: string
+      description: "Domain root; emitted packs go under {domain_path}/tools/auto/."
+
+output_schema:
+  type: object
+  required: [synthesized_tools, credentials_needed, classification, build_plan]
+  properties:
+    synthesized_tools:
+      type: array
+      description: "One entry per closed gap."
+      items:
+        type: object
+        required: [gap_name, decision, pack_id, rationale]
+        properties:
+          gap_name:
+            type: string
+            description: "Original gap that prompted this tool."
+          decision:
+            type: string
+            enum: [reuse-existing-mcp, synthesize-new, unreachable]
+            description: |
+              - reuse-existing-mcp: use a pre-loaded MCP server
+              - synthesize-new: emit a new tool pack YAML skeleton
+              - unreachable: no viable path (surface to humans)
+          pack_id:
+            type: string
+            description: "toolpack://auto/<name> for synthesized, or toolpack://mcp/<name> for MCP wraps."
+          pack_yaml:
+            type: string
+            description: "Full YAML content to write. Omitted for `unreachable`."
+          rationale:
+            type: string
+            description: "Why this decision — cites known_mcp_servers entry or gap analysis."
+          credentials:
+            type: array
+            description: "Credentials this pack needs (passed up to Builder)."
+            items:
+              type: object
+              required: [name, purpose, required]
+              properties:
+                name: {type: string}
+                purpose: {type: string}
+                required: {type: boolean}
+    credentials_needed:
+      type: array
+      description: "Union of credentials across all synthesized_tools (deduplicated)."
+      items:
+        type: object
+        required: [name, purpose, required]
+        properties:
+          name: {type: string}
+          purpose: {type: string}
+          required: {type: boolean}
+    classification:
+      type: object
+      required: [reused_mcp_count, synthesized_count, unreachable_count]
+      properties:
+        reused_mcp_count: {type: integer}
+        synthesized_count: {type: integer}
+        unreachable_count: {type: integer}
+    build_plan:
+      type: object
+      required: [packs_planned, rationale]
+      properties:
+        packs_planned: {type: integer}
+        rationale: {type: string}
+
+grading_criteria_ref: grading_criteria.yaml
+
+metadata:
+  author: platform-team
+  tags: [genesis, tools, synthesis, mcp, meta-agent]

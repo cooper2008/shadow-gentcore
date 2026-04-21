@@ -1,0 +1,47 @@
+# Grading rubric for ToolSynthesizerAgent outputs.
+#
+# Applied by OutputValidator after the gate passes. Low scores don't block
+# the workflow but surface in the run record for EvolutionAgent to learn from.
+
+criteria:
+  - name: decisions_grounded
+    description: >-
+      Every synthesized_tools[*] has a rationale that cites either a
+      known_mcp_servers entry (for reuse) or the specific knowledge_map
+      category the gap came from. No fabricated references.
+    weight: 0.25
+
+  - name: mcp_preference
+    description: >-
+      When a known MCP server's suitability_tags overlap the gap, the
+      agent chose reuse-existing-mcp over synthesize-new. Reuse is
+      safer and preferred when viable.
+    weight: 0.20
+
+  - name: credentials_complete
+    description: >-
+      Every synthesized pack declares every credential its operations
+      need (no silent unauthenticated calls to external services).
+      credentials_needed at the top level is a deduplicated union of
+      per-pack entries.
+    weight: 0.20
+
+  - name: pack_schema_valid
+    description: >-
+      Emitted pack_yaml parses as valid YAML, includes `id:`, `tools:`,
+      `credentials:`, and `metadata.auto_generated: true` +
+      `metadata.pending_review: true`. No hardcoded secrets.
+    weight: 0.20
+
+  - name: unreachable_honest
+    description: >-
+      Gaps that genuinely can't be safely synthesized (arbitrary code
+      exec, medical device control, ambiguous scope) are marked
+      unreachable with a clear rationale, not force-synthesized.
+    weight: 0.10
+
+  - name: build_plan_coherent
+    description: >-
+      build_plan.packs_planned matches len(synthesized_tools with
+      pack_yaml). Rationale line describes the overall choice.
+    weight: 0.05

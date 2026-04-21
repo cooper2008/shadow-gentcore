@@ -1,0 +1,112 @@
+# Security policy for auto-generated tool packs (Phase B gate enforces this).
+#
+# Consumed by:
+#   * ToolSynthesizerAgent — pre-loaded as `tool_security_policy` context so
+#     the agent knows what patterns to avoid while emitting.
+#   * tool_security_scanner — runs after emit to validate each generated
+#     pack against the rules below; gate BLOCKS the workflow if any
+#     violation is found (see `synthesize_tools_gate` in genesis_build.yaml).
+#
+# Philosophy:
+#   Default-deny for anything that could exfiltrate secrets, escalate privs,
+#   or run untrusted code. Explicit allow-lists for patterns known safe.
+
+version: 1
+
+# Rules applied to every tool pack YAML the Synthesizer emits.
+rules:
+
+  # ── Credentials ────────────────────────────────────────────────────────
+  - id: creds-declared-for-authed-tools
+    severity: block
+    description: >-
+      If a pack contains a tool with a `base_url` that is not localhost
+      or 127.0.0.1, it MUST declare a `credentials:` block — no silent
+      unauthenticated calls to external services.
+    check: "has_remote_base_url and not has_credentials_block"
+
+  - id: creds-no-hardcoded-secrets
+    severity: block
+    description: >-
+      Pack YAML must not contain inline values that look like real secrets.
+      Credential values MUST be referenced by name (via env / secrets
+      backend), never embedded literally.
+    forbidden_patterns:
+      - 'ghp_[A-Za-z0-9]{36,}'            # GitHub PAT
+      - 'xoxb-[0-9]+-[0-9]+-[A-Za-z0-9]+' # Slack bot token
+      - 'AKIA[A-Z0-9]{16}'                # AWS access key ID
+      - 'sk-[A-Za-z0-9]{20,}'             # OpenAI-style
+      - 'Bearer\s+[A-Za-z0-9_\-\.]{20,}'  # raw bearer
+
+  # ── URL templates ──────────────────────────────────────────────────────
+  - id: urls-safe-parameter-syntax
+    severity: block
+    description: >-
+      URL templates must use `${name}` or `{name}` placeholders for params
+      resolved from input/credentials only — not arbitrary expressions.
+    forbidden_url_patterns:
+      - '\$\{[^}]*\([^)]*\)'   # function calls in templates
+      - '\$\{[^}]*\|[^}]*\}'   # piped filter chains
+      - 'javascript:'
+      - 'data:'
+      - 'file://'              # local file URIs in remote tool packs
+
+  # ── Operations ─────────────────────────────────────────────────────────
+  - id: shell-requires-explicit-permission
+    severity: block
+    description: >-
+      A tool may only declare `adapter_class: shell` or an operation that
+      shells out if `permissions.shell_command == allow` is set on the
+      tool manifest. Default deny.
+
+  - id: no-inline-script
+    severity: block
+    description: >-
+      Tools must not embed executable scripts (bash/sh/python code bodies)
+      inside YAML string fields. Use versioned adapter modules instead.
+    forbidden_fields: [script, inline_script, code, exec_body]
+
+  - id: timeouts-bounded
+    severity: warn
+    description: >-
+      Every tool should declare a timeout ≤ 60s by default. Synthesizer
+      emits `timeout: 30` absent an override. Longer timeouts allowed for
+      explicit batch/build operations.
+
+  # ── Metadata hygiene ───────────────────────────────────────────────────
+  - id: pack-has-purpose
+    severity: warn
+    description: >-
+      Every pack must include a `description:` and every tool must have a
+      `purpose` or `description` field. Helps ToolDiscoveryAgent match
+      capabilities in future runs.
+
+  - id: auto-generated-marker
+    severity: info
+    description: >-
+      Synthesizer-emitted packs must carry `metadata.auto_generated: true`
+      and `metadata.pending_review: true` so humans can audit them before
+      they're considered production-blessed.
+
+# Allow-list overrides: severity `block` rules above can be downgraded to
+# `warn` for specific pack IDs (e.g. vetted fixtures). Keep this list short.
+allowlist:
+  # Example (none today):
+  # - pack_id: "toolpack://services/internal-test"
+  #   downgrade: [shell-requires-explicit-permission]
+
+# Defaults the Synthesizer stamps onto every emitted pack.
+synthesizer_defaults:
+  metadata:
+    auto_generated: true
+    pending_review: true
+    generator_version: "1.0.0"
+  default_timeout: 30
+  default_retries: 1
+  default_audit_logging: true
+
+# Review workflow:
+#   1. Synthesizer writes pack to <domain>/tools/auto/<id>.yaml.
+#   2. tool_security_scanner runs — findings surfaced as gate result.
+#   3. A human reviews the diff, moves pack from auto/ to services/ when
+#      blessed, and flips `pending_review: false`.

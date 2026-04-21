@@ -68,6 +68,10 @@ def _build_preload_item(
         return _preload_shared_stage_catalog()
     if preload_name == "capabilities_config":
         return _preload_capabilities_config()
+    if preload_name == "known_mcp_servers":
+        return _preload_known_mcp_servers()
+    if preload_name == "tool_security_policy":
+        return _preload_tool_security_policy()
     logger.warning("Unknown context.preload source: %r", preload_name)
     return None
 
@@ -203,6 +207,59 @@ def _preload_capabilities_config() -> dict[str, Any] | None:
     return {
         "source": "preload:capabilities_config",
         "content": content,
+        "priority": 5,
+    }
+
+
+def _preload_known_mcp_servers() -> dict[str, Any] | None:
+    """Read `config/known_mcp_servers.yaml` so ToolSynthesizer can prefer
+    wrapping existing MCP servers over synthesizing new packs."""
+    framework_root = Path(__file__).resolve().parent.parent.parent
+    cfg_path = framework_root / "config" / "known_mcp_servers.yaml"
+    if not cfg_path.exists():
+        return None
+    try:
+        body = cfg_path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    return {
+        "source": "preload:known_mcp_servers",
+        "content": (
+            "# Known Public MCP Servers (pre-loaded)\n\n"
+            "Prefer wrapping one of these over synthesizing a new pack when "
+            "the capability + credentials match. Each entry lists repo, "
+            "purpose, required credentials, and suitability_tags.\n\n"
+            "```yaml\n"
+            f"{body}\n"
+            "```\n"
+        ),
+        "priority": 5,
+    }
+
+
+def _preload_tool_security_policy() -> dict[str, Any] | None:
+    """Read `config/tool_security.yaml` so ToolSynthesizer knows what patterns
+    to avoid (hardcoded secrets, unsafe URL templates, unscoped shell, etc.)."""
+    framework_root = Path(__file__).resolve().parent.parent.parent
+    cfg_path = framework_root / "config" / "tool_security.yaml"
+    if not cfg_path.exists():
+        return None
+    try:
+        body = cfg_path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    return {
+        "source": "preload:tool_security_policy",
+        "content": (
+            "# Tool Security Policy (pre-loaded — enforced at gate)\n\n"
+            "Every pack you emit must satisfy these rules or the gate blocks "
+            "the workflow. Default-deny for credential exposure, unsafe URL "
+            "templates, unscoped shell access, inline scripts. Metadata must "
+            "carry `auto_generated: true` and `pending_review: true`.\n\n"
+            "```yaml\n"
+            f"{body}\n"
+            "```\n"
+        ),
         "priority": 5,
     }
 

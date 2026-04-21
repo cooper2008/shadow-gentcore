@@ -1,0 +1,90 @@
+# Known public MCP servers ToolSynthesizerAgent can suggest when a gap matches.
+#
+# Format: entries are informational — pre-loaded into the agent's context so
+# it can prefer "wrap existing MCP" over "synthesize from scratch" when a
+# well-known server covers the gap.
+#
+# Each entry: {name, repo, purpose, credentials, setup_hint, suitability_tags}.
+# The suitability_tags let the agent match gaps by capability/industry
+# rather than exact keyword.
+#
+# Curated list — extend as new servers earn production use.
+
+servers:
+  - name: mcp-github
+    repo: https://github.com/modelcontextprotocol/servers/tree/main/src/github
+    purpose: "Read / write GitHub issues, PRs, repos, releases, workflows."
+    credentials: [GITHUB_TOKEN]
+    suitability_tags: [vcs, code-review, ci, release-mgmt]
+    setup_hint: "npm i -g @modelcontextprotocol/server-github; set GITHUB_PERSONAL_ACCESS_TOKEN."
+
+  - name: mcp-gitlab
+    repo: https://github.com/modelcontextprotocol/servers/tree/main/src/gitlab
+    purpose: "GitLab API wrapper — MRs, issues, pipelines."
+    credentials: [GITLAB_TOKEN]
+    suitability_tags: [vcs, code-review, ci]
+    setup_hint: "npm i -g @modelcontextprotocol/server-gitlab; set GITLAB_PERSONAL_ACCESS_TOKEN."
+
+  - name: mcp-slack
+    repo: https://github.com/modelcontextprotocol/servers/tree/main/src/slack
+    purpose: "Read / post Slack messages, channels, users."
+    credentials: [SLACK_BOT_TOKEN]
+    suitability_tags: [chat, notifications, incidents]
+
+  - name: mcp-sentry
+    repo: https://github.com/modelcontextprotocol/servers/tree/main/src/sentry
+    purpose: "Fetch issue details, stack traces, and project events from Sentry."
+    credentials: [SENTRY_AUTH_TOKEN]
+    suitability_tags: [observability, errors, incidents]
+
+  - name: mcp-postgres
+    repo: https://github.com/modelcontextprotocol/servers/tree/main/src/postgres
+    purpose: "Read-only SQL over a Postgres database."
+    credentials: [DATABASE_URL]
+    suitability_tags: [database, reporting]
+    setup_hint: "Read-only by default; do NOT point at production primaries without explicit review."
+
+  - name: mcp-aws
+    repo: https://github.com/awslabs/mcp
+    purpose: "Suite of AWS MCP servers (S3, DynamoDB, CloudWatch, etc.)."
+    credentials: [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION]
+    suitability_tags: [cloud, aws, storage, observability]
+
+  - name: mcp-filesystem
+    repo: https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem
+    purpose: "Sandboxed local filesystem read/write."
+    credentials: []
+    suitability_tags: [local, sandbox]
+
+  - name: mcp-memory
+    repo: https://github.com/modelcontextprotocol/servers/tree/main/src/memory
+    purpose: "Knowledge-graph style memory store."
+    credentials: []
+    suitability_tags: [memory, state]
+
+  - name: mcp-puppeteer
+    repo: https://github.com/modelcontextprotocol/servers/tree/main/src/puppeteer
+    purpose: "Headless Chrome automation for web scraping / e2e checks."
+    credentials: []
+    suitability_tags: [browser, web-scraping, testing]
+
+  - name: mcp-brave-search
+    repo: https://github.com/modelcontextprotocol/servers/tree/main/src/brave-search
+    purpose: "Web search via Brave Search API."
+    credentials: [BRAVE_API_KEY]
+    suitability_tags: [search, research]
+
+  - name: mcp-google-drive
+    repo: https://github.com/modelcontextprotocol/servers/tree/main/src/gdrive
+    purpose: "List, read, and search Google Drive documents."
+    credentials: [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_REFRESH_TOKEN]
+    suitability_tags: [docs, knowledge-base, oauth]
+    setup_hint: "Requires OAuth 2.0 flow — run server's `setup` CLI once to produce refresh token."
+
+# When ToolSynthesizerAgent classifies a gap:
+#   1) Search suitability_tags + purpose text for matches in this list.
+#   2) If match score ≥ threshold, prefer wrapping the MCP server (low risk).
+#   3) Otherwise, classify as `synthesize-new` and emit a tool pack skeleton.
+#
+# Extending: add entries here to bias genesis toward well-known servers over
+# bespoke synthesis. Vet each entry for security posture + maintenance status.
