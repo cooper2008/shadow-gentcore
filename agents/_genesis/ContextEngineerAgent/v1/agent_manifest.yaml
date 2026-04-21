@@ -6,6 +6,7 @@ version: "1.0.0"
 description: "Generates high-quality context documents (standards.md, reference docs, glossary, compliance draft) from classified knowledge. Produces Layer 1 and Layer 2 knowledge for domain agents."
 
 system_prompt_ref: system_prompt.md
+hooks_ref: hooks.py
 
 execution_mode:
   # Single-shot: domain_context_docs pre-loaded into prompt via
@@ -59,12 +60,13 @@ output_schema:
       properties:
         standards_md:
           type: string
-          description: "Content of context/standards.md (Layer 1, ≤500 lines)"
+          description: "Content of context/standards.md (Layer 1, ≤500 lines). ALWAYS injected into every agent prompt."
         glossary_md:
           type: string
           description: "Content of context/glossary.md"
         reference_docs:
           type: array
+          description: "Monolithic reference docs (legacy back-compat). Prefer `reference_chunks` for new domains."
           items:
             type: object
             required: [filename, content, topic, depth_score]
@@ -73,6 +75,39 @@ output_schema:
               content: {type: string}
               topic: {type: string}
               depth_score: {type: number, minimum: 0, maximum: 100}
+        reference_chunks:
+          type: array
+          description: >-
+            Tier 2 chunked reference docs. Each chunk covers ONE topic in
+            200-500 lines (≤5KB). Domain agents retrieve relevant chunks at
+            runtime via `context_retrieve(topic, keywords)` instead of
+            loading whole reference files. Emit ≥5 chunks per generated
+            domain when source material supports it.
+          items:
+            type: object
+            required: [id, topic, keywords, summary, content]
+            properties:
+              id:
+                type: string
+                description: "Stable slug identifier, e.g. `fastapi_routers`. Used as filename stem."
+              topic:
+                type: string
+                description: "Short topic title (what this chunk covers)."
+              keywords:
+                type: array
+                description: "5-15 retrieval keywords — nouns, API names, patterns."
+                items: {type: string}
+              summary:
+                type: string
+                description: "One-line (≤150 chars) summary shown in the index."
+              content:
+                type: string
+                description: "Full chunk body as markdown. ≤5KB for token efficiency."
+              depth_score:
+                type: number
+                minimum: 0
+                maximum: 100
+                description: "Honest self-assessment of chunk thoroughness."
         compliance_draft:
           type: string
           description: "YAML content for rules/compliance.yaml"

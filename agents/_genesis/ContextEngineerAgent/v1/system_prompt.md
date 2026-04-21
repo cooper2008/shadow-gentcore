@@ -58,13 +58,62 @@ Markdown with one `## Term Name` block per domain-specific term. Format:
 
 Include domain jargon, acronyms, internal project terminology, domain-flavored technical terms.
 
-### 3. `reference_docs` (array)
+### 3. `reference_docs` (array — LEGACY, back-compat)
 
-One entry per major topic worth dedicated coverage. Each entry:
+Monolithic topic files. Emit these ONLY when a topic's content genuinely can't be decomposed into focused chunks (rare). Prefer `reference_chunks` below.
+
 - `filename`: path under `context/reference/` (e.g. `reference/fastapi_patterns.md`)
 - `topic`: short topic label
-- `content`: full markdown — procedures, code snippets, config, pitfalls, external links. These are loaded on-demand so depth is encouraged.
-- `depth_score`: 0–100, honest measure of how thorough this doc is.
+- `content`: full markdown
+- `depth_score`: 0–100
+
+### 3b. `reference_chunks` (array — PREFERRED, Tier 2 retrieval)
+
+**This is the new default.** Domain agents at runtime call
+`context_retrieve(topic, keywords)` → it returns the 3 most relevant
+chunks via keyword index. Emitting chunked reference docs lets agents
+pull ~500 tokens of focused context instead of a 5KB wall of text,
+dramatically reducing per-task token cost.
+
+**Chunking rules (follow these, not your instinct to lump):**
+
+1. **One chunk per TOPIC, not per file.** If `reference_fastapi.md`
+   would cover routers, dependency injection, and auth, emit THREE
+   chunks: `fastapi_routers`, `fastapi_dependency_injection`,
+   `fastapi_auth_patterns` — each standalone.
+
+2. **Size: aim for 200–500 lines, cap ≤5 KB body.** Longer means you
+   didn't split enough. Shorter is fine if the topic is genuinely
+   small.
+
+3. **Summary ≤150 chars.** Shown in the keyword index before the full
+   body is fetched. Think "what would make me click into this chunk."
+
+4. **Keywords: 5–15 per chunk.** Nouns, specific API names, pattern
+   names. Examples:
+   - Good: `["router", "APIRouter", "prefix", "tag", "include_router"]`
+   - Bad:  `["code", "python", "good"]` (generic)
+   - Bad:  `["how to use routers in fastapi"]` (sentences, not keywords)
+
+5. **Emit ≥5 chunks per domain when source material supports it.**
+   Fewer than 5 usually means you missed natural topic boundaries.
+
+6. **Chunks MUST be self-contained.** An agent reading one chunk
+   shouldn't need to read another to make sense of it. Brief
+   cross-references are fine; assumed knowledge is not.
+
+7. **Ground every chunk in real source material.** Same rule as
+   standards.md — don't invent. If the source is thin, emit fewer
+   chunks and note the gap in `generation_notes`.
+
+Each chunk entry:
+
+- `id`: stable slug (e.g. `fastapi_routers`) — becomes the filename
+- `topic`: topic title (e.g. "FastAPI router patterns")
+- `keywords`: array of 5–15 retrieval keywords
+- `summary`: ≤150 chars one-liner
+- `content`: full markdown body, ≤5KB
+- `depth_score`: 0–100
 
 ### 4. `compliance_draft` (YAML string)
 
