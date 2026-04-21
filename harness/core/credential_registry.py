@@ -36,12 +36,28 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class CredentialRequirement:
-    """One credential a tool declares it needs."""
+    """One credential a tool declares it needs.
+
+    `auth_kind` is a coarse classifier used by the Builder's
+    REQUIRED_CREDENTIALS.md generator to group related creds (e.g. the
+    `client_id` / `client_secret` / `refresh_token` trio of an OAuth2
+    app) so the team-lead checklist shows one OAuth setup block instead
+    of three opaque env-var rows. Values:
+      - `api_key`   (default): simple token / email / URL
+      - `oauth2`    : part of an OAuth 2.0 client + refresh_token setup
+      - `basic`     : username + password pair
+      - `mtls`      : mutual TLS cert + key
+      - `aws_iam`   : AWS access key / secret / optional session token
+    """
 
     name: str                          # canonical name (e.g. "JIRA_API_TOKEN")
     purpose: str = ""                  # human-readable explainer + "how to get it" hint
     required: bool = True              # False = optional; absence is not an error
     declared_by: tuple[str, ...] = ()  # tool names that require this cred
+    auth_kind: str = "api_key"         # coarse grouping for UI / docs
+    oauth_group: str = ""              # identifier grouping multiple OAuth creds
+                                       # for the same app (e.g. "google-drive")
+    oauth_scopes: tuple[str, ...] = () # scopes requested (oauth2 only)
 
     def with_declarer(self, tool_name: str) -> CredentialRequirement:
         """Return a copy with `tool_name` appended to declared_by."""
@@ -52,6 +68,9 @@ class CredentialRequirement:
             purpose=self.purpose,
             required=self.required,
             declared_by=(*self.declared_by, tool_name),
+            auth_kind=self.auth_kind,
+            oauth_group=self.oauth_group,
+            oauth_scopes=self.oauth_scopes,
         )
 
 
@@ -141,11 +160,17 @@ class CredentialRegistry:
             name = str(req.get("name", "")).strip()
             if not name:
                 continue
+            scopes_raw = req.get("oauth_scopes") or req.get("scopes") or ()
+            if isinstance(scopes_raw, str):
+                scopes_raw = [s.strip() for s in scopes_raw.split(",") if s.strip()]
             parsed.append(CredentialRequirement(
                 name=name,
                 purpose=str(req.get("purpose", "")),
                 required=bool(req.get("required", True)),
                 declared_by=(tool_name,),
+                auth_kind=str(req.get("auth_kind", "api_key")),
+                oauth_group=str(req.get("oauth_group", "")),
+                oauth_scopes=tuple(str(s) for s in scopes_raw),
             ))
         if parsed:
             self._tool_requirements[tool_name] = parsed

@@ -1774,6 +1774,53 @@ def cred_status(agent_id: str | None, domain_path: str | None) -> None:
         click.echo(report.format_cli())
 
 
+@credentials.command("oauth-setup")
+@click.argument("group_key")
+def cred_oauth_setup(group_key: str) -> None:
+    """Print one-time setup instructions for an OAuth credential group.
+
+    We don't run the OAuth dance ourselves (that needs a callback server
+    per provider). Instead, surface the scopes + env var names required
+    for each OAuth group declared by a tool pack, so a team lead can run
+    the vendor's own CLI (gcloud, aws, gh auth, etc.) and export results.
+    """
+    registry = _build_cred_registry()
+    # Collect OAuth creds across all known tools
+    oauth_groups: dict[str, list[Any]] = {}
+    for tool in registry.known_tools:
+        for req in registry.required_for_tool(tool):
+            if getattr(req, "auth_kind", "api_key") == "oauth2":
+                key = getattr(req, "oauth_group", "") or req.name
+                oauth_groups.setdefault(key, []).append(req)
+
+    if group_key not in oauth_groups:
+        known = ", ".join(sorted(oauth_groups.keys())) or "(none)"
+        click.echo(f"No OAuth group '{group_key}' found.", err=True)
+        click.echo(f"Known groups: {known}", err=True)
+        raise SystemExit(1)
+
+    entries = oauth_groups[group_key]
+    scopes: set[str] = set()
+    for req in entries:
+        for s in getattr(req, "oauth_scopes", ()) or ():
+            scopes.add(s)
+
+    click.echo(f"\nOAuth setup for group: {group_key}\n")
+    click.echo("Credentials needed (set all of these in your shell or secrets backend):")
+    for req in sorted(entries, key=lambda r: r.name):
+        click.echo(f"  - {req.name}  — {req.purpose}")
+    if scopes:
+        click.echo("\nScopes to request when creating the OAuth app:")
+        for s in sorted(scopes):
+            click.echo(f"  - {s}")
+    click.echo("\nSuggested steps:")
+    click.echo("  1. Register an OAuth app with the vendor (note the client_id + secret).")
+    click.echo("  2. Run the vendor's CLI or authorization URL flow with the scopes above.")
+    click.echo("  3. Capture the refresh_token.")
+    click.echo("  4. Export the three values above, or store in `config/credentials.yaml`.")
+    click.echo("  5. Verify with: ./ai credentials status --domain <your-domain>")
+
+
 @credentials.command("missing")
 def cred_missing() -> None:
     """Exit non-zero if any required credential is unresolved (CI gate)."""
