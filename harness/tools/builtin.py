@@ -106,6 +106,89 @@ class GenesisVerifierAdapter:
             }
 
 
+class MemoryRecallAdapter:
+    """Tier 4 — agent queries its own persistent memory.
+
+    Wraps the existing FileMemoryStore (harness.core.memory_store) so an agent
+    can look up past task outputs before attempting a new one. The store
+    already records `key="run_output"` entries from AgentRunner when a
+    memory_store is wired in; this adapter lets the agent decide WHEN to
+    consult it from inside its react loop.
+
+    Arguments:
+        agent_id:  string — normally injected by AgentRunner. Required.
+        key:       optional — filter to a specific memory key (e.g. "run_output").
+        k:         integer — max entries to return (default 5).
+        domain_root: optional — override memory root. Defaults to
+                   GENTCORE_MEMORY_DIR env var, else `<cwd>/.gentcore/memory`.
+
+    Output:
+        stdout:    rendered entries as markdown, newest first, one per block.
+        entries_returned: int.
+    """
+
+    async def invoke(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        try:
+            from harness.core.memory_store import FileMemoryStore
+        except Exception as exc:
+            return {"success": False, "stdout": "", "stderr": f"memory_store import failed: {exc}", "exit_code": 1}
+
+        agent_id = arguments.get("agent_id") or arguments.get("caller_agent_id") or ""
+        if not agent_id:
+            return {"success": False, "stdout": "", "stderr": "Missing 'agent_id' argument", "exit_code": 1}
+        key = arguments.get("key")
+        try:
+            k = int(arguments.get("k", 5))
+        except (TypeError, ValueError):
+            k = 5
+
+        base = arguments.get("memory_root") or arguments.get("domain_root") or ".gentcore/memory"
+        base_path = Path(base).expanduser()
+        if base_path.name != "memory":
+            base_path = base_path / ".gentcore" / "memory"
+
+        try:
+            store = FileMemoryStore(base_dir=base_path)
+            entries = store.recall(agent_id=agent_id, key=key, k=k)
+        except Exception as exc:
+            return {"success": False, "stdout": "", "stderr": f"recall error: {exc}", "exit_code": 1}
+
+        if not entries:
+            return {
+                "success": True,
+                "stdout": (
+                    f"[memory_recall] No past entries for agent={agent_id!r}"
+                    + (f" (key={key!r})" if key else "")
+                    + ". This may be the agent's first run — proceed without historical context."
+                ),
+                "stderr": "",
+                "exit_code": 0,
+                "entries_returned": 0,
+            }
+
+        # Render newest-first. FileMemoryStore.recall returns [-k:] so entries[-1] is newest.
+        import json as _json
+        lines = [f"[memory_recall] {len(entries)} past entr{'y' if len(entries)==1 else 'ies'} for agent={agent_id}:\n"]
+        for entry in reversed(entries):
+            ts = entry.get("timestamp")
+            val = entry.get("value", "")
+            key_label = entry.get("key", "?")
+            ts_label = ""
+            if isinstance(ts, (int, float)):
+                import time as _time
+                age_days = (_time.time() - ts) / 86400
+                ts_label = f" (seen {age_days:.1f}d ago)"
+            val_preview = val if isinstance(val, str) else _json.dumps(val, default=str)
+            lines.append(f"## key=`{key_label}`{ts_label}\n{val_preview[:600]}\n")
+        return {
+            "success": True,
+            "stdout": "\n---\n".join(lines),
+            "stderr": "",
+            "exit_code": 0,
+            "entries_returned": len(entries),
+        }
+
+
 class OriginFetchAdapter:
     """Tier 3 — live re-fetch from the origin source via SourceAdapter.
 
@@ -455,6 +538,7 @@ BUILTIN_ADAPTERS: dict[str, Any] = {
     # Memory tiers (pure-Python, no shell)
     "context_retrieve": ContextRetrieveAdapter(),
     "origin_fetch": OriginFetchAdapter(),
+    "memory_recall": MemoryRecallAdapter(),
 
     # Filesystem
     "file_read": _make(lambda a: f"cat {_q(a['path'])}"),

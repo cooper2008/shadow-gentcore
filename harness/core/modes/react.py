@@ -120,6 +120,22 @@ def _build_anthropic_tools(
                 },
             },
         },
+        "memory_recall": {
+            "description": (
+                "Tier 4 — query this agent's persistent memory for past task outputs. "
+                "Use when the current task looks similar to something you've solved before — "
+                "past solutions may shortcut the work. AgentRunner records `run_output` "
+                "entries automatically; callers can filter by key if specific memories are "
+                "expected. Returns entries newest-first."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Optional key filter (e.g. \"run_output\"). Omit for all keys."},
+                    "k": {"type": "integer", "default": 5, "description": "Max entries to return."},
+                },
+            },
+        },
     }
 
     tools = []
