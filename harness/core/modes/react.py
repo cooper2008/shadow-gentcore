@@ -82,6 +82,26 @@ def _build_anthropic_tools(
             "description": "List files in a directory (ls -la)",
             "input_schema": {"type": "object", "properties": {"path": {"type": "string", "default": "."}}},
         },
+        "context_retrieve": {
+            "description": (
+                "Tier 2 — retrieve the top-K most relevant reference chunks for a topic. "
+                "Use this BEFORE giving up on a question: it's cheaper than loading a whole "
+                "reference file and often contains exactly the snippet you need. If it returns "
+                "no matches, consider `origin_fetch` (Tier 3) to pull live from the source."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "description": "Topic phrase — matches chunk topic lines."},
+                    "keywords": {
+                        "type": "array", "items": {"type": "string"},
+                        "description": "Additional retrieval keywords (nouns / API names / patterns).",
+                    },
+                    "top_k": {"type": "integer", "default": 3, "description": "Max chunks to return."},
+                    "min_score": {"type": "number", "default": 0.5, "description": "Floor score for inclusion."},
+                },
+            },
+        },
     }
 
     tools = []

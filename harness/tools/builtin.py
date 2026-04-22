@@ -106,6 +106,66 @@ class GenesisVerifierAdapter:
             }
 
 
+class ContextRetrieveAdapter:
+    """Tier 2 retrieval tool for domain agents.
+
+    Reads `{domain_root}/context/reference_index.yaml` and returns the top-k
+    chunks matching a (topic, keywords) query. Pure Python — no embeddings,
+    no external calls. Arguments:
+
+        domain_root:  optional — defaults to cwd or args.get("cwd"). Usually
+                      injected by AgentRunner via the task envelope.
+        topic:        string — topic phrase to match against chunk topics
+        keywords:     list[str] — additional retrieval keywords
+        top_k:        int — how many chunks to return (default 3)
+        min_score:    float — floor score for inclusion (default 0.5)
+
+    Output:
+        success / exit_code are set based on whether at least one chunk
+        scored above min_score. `stdout` contains the LLM-ready rendered
+        chunk body (with Tier-3 fallback hint on miss).
+    """
+
+    async def invoke(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        try:
+            from harness.core.context_retriever import ContextRetriever
+        except Exception as exc:
+            return {"success": False, "stdout": "", "stderr": f"retriever import failed: {exc}", "exit_code": 1}
+
+        domain_root = arguments.get("domain_root") or arguments.get("cwd") or "."
+        topic = str(arguments.get("topic", ""))
+        kws = arguments.get("keywords") or []
+        if isinstance(kws, str):
+            kws = [k.strip() for k in kws.split(",") if k.strip()]
+        try:
+            top_k = int(arguments.get("top_k", 3))
+        except (TypeError, ValueError):
+            top_k = 3
+        try:
+            min_score = float(arguments.get("min_score", 0.5))
+        except (TypeError, ValueError):
+            min_score = 0.5
+
+        try:
+            retriever = ContextRetriever.for_domain(Path(domain_root))
+            result = retriever.search(topic=topic, keywords=kws, top_k=top_k, min_score=min_score)
+        except Exception as exc:
+            return {"success": False, "stdout": "", "stderr": f"retrieve error: {exc}", "exit_code": 1}
+
+        rendered = result.format_for_llm(retriever)
+        # Hit = any chunk returned above min_score; miss = empty (hint emitted).
+        has_hit = bool(result.chunks)
+        return {
+            "success": True,
+            "stdout": rendered,
+            "stderr": "",
+            "exit_code": 0,
+            "chunks_returned": len(result.chunks),
+            "total_candidates": result.total_candidates,
+            "hit": has_hit,
+        }
+
+
 class FileWriteAdapter:
     """Writes content to a file (not a shell command — pure Python for safety)."""
 
@@ -254,6 +314,9 @@ def _gh_pr_review(a: dict[str, Any]) -> str:
 
 
 BUILTIN_ADAPTERS: dict[str, Any] = {
+    # Memory tiers (pure-Python, no shell)
+    "context_retrieve": ContextRetrieveAdapter(),
+
     # Filesystem
     "file_read": _make(lambda a: f"cat {_q(a['path'])}"),
     "file_write": FileWriteAdapter(),
