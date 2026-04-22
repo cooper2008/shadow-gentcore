@@ -106,6 +106,144 @@ class GenesisVerifierAdapter:
             }
 
 
+class OriginFetchAdapter:
+    """Tier 3 — live re-fetch from the origin source via SourceAdapter.
+
+    Use case: Tier 1 (standards.md) and Tier 2 (context_retrieve) came up
+    empty. Rather than give up, the agent reads directly from the origin
+    repo/docs — hitting the materialization cache first, only re-fetching
+    if cache is stale.
+
+    Arguments:
+        path:        string (required) — relative path within the source,
+                     e.g. `src/auth/session.py`
+        source_uri:  optional — explicit source URI (e.g. github://acme/backend@main).
+                     If omitted, the agent's manifest `origin_fallback.sources[0]`
+                     is used.
+        domain_root: optional — defaults to cwd.
+
+    Scope enforcement:
+        If `origin_fallback.scope` is declared on the agent manifest (glob),
+        only paths matching it are fetched; others return a 403-style error.
+        This prevents runaway agents from reading arbitrary paths.
+
+    Audit logging:
+        Every call appends a JSON line to `{domain_root}/.gentcore/origin_log.jsonl`.
+        EvolutionAgent reads this to learn what Tier 2 missed (so it can
+        propose standards.md / chunk additions).
+    """
+
+    async def invoke(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        import fnmatch
+        import json as _json
+        import time as _time
+
+        path = str(arguments.get("path", "")).strip().lstrip("/")
+        if not path:
+            return {"success": False, "stdout": "", "stderr": "Missing 'path' argument", "exit_code": 1}
+
+        domain_root = Path(arguments.get("domain_root") or arguments.get("cwd") or ".").expanduser().resolve()
+        source_uri = arguments.get("source_uri") or arguments.get("source") or ""
+        scope = arguments.get("scope") or "**"
+
+        # Enforce scope glob before any network work.
+        if not fnmatch.fnmatch(path, scope):
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": f"Path {path!r} is outside declared origin scope ({scope!r}). "
+                          "Request blocked — update the agent's origin_fallback.scope if this is intentional.",
+                "exit_code": 1,
+                "scope_rejected": True,
+            }
+
+        if not source_uri:
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": "No source_uri provided and agent has no origin_fallback.sources declared.",
+                "exit_code": 1,
+            }
+
+        t0 = _time.time()
+        try:
+            from harness.core.source_adapters import resolve_source, SourceSpec
+            local_root = await resolve_source(SourceSpec(uri=source_uri))
+        except Exception as exc:
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": f"Origin materialization failed: {str(exc)[:200]}",
+                "exit_code": 1,
+            }
+
+        target = local_root / path
+        if not target.exists():
+            # Log the miss — EvolutionAgent can see what chunks were expected.
+            _append_origin_log(domain_root, {
+                "timestamp": _time.time(),
+                "path": path,
+                "source_uri": source_uri,
+                "outcome": "not_found",
+                "elapsed_ms": int((_time.time() - t0) * 1000),
+            })
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": f"Path not found in source: {path}",
+                "exit_code": 1,
+            }
+
+        try:
+            content = target.read_text(encoding="utf-8")
+        except Exception as exc:
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": f"Could not read {target}: {exc}",
+                "exit_code": 1,
+            }
+
+        _append_origin_log(domain_root, {
+            "timestamp": _time.time(),
+            "path": path,
+            "source_uri": source_uri,
+            "outcome": "ok",
+            "bytes": len(content),
+            "elapsed_ms": int((_time.time() - t0) * 1000),
+        })
+
+        # Truncate the returned blob so huge files don't blow context — LLM can
+        # request a narrower grep via a follow-up call.
+        max_bytes = int(arguments.get("max_bytes", 20_000))
+        truncated = content[:max_bytes]
+        suffix = "" if len(content) <= max_bytes else (
+            f"\n\n[origin_fetch truncated at {max_bytes} bytes of {len(content)}. "
+            "Request with a narrower path or use context_retrieve.]"
+        )
+        return {
+            "success": True,
+            "stdout": f"# origin_fetch: {source_uri} / {path}\n\n{truncated}{suffix}",
+            "stderr": "",
+            "exit_code": 0,
+            "bytes": len(content),
+            "truncated": bool(suffix),
+        }
+
+
+def _append_origin_log(domain_root: Path, entry: dict[str, Any]) -> None:
+    """Append a JSON line to `{domain}/.gentcore/origin_log.jsonl`."""
+    try:
+        import json as _json
+        log_dir = domain_root / ".gentcore"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with (log_dir / "origin_log.jsonl").open("a", encoding="utf-8") as f:
+            f.write(_json.dumps(entry) + "\n")
+    except Exception:
+        # Logging failure must NOT crash the tool call.
+        pass
+
+
 class ContextRetrieveAdapter:
     """Tier 2 retrieval tool for domain agents.
 
@@ -316,6 +454,7 @@ def _gh_pr_review(a: dict[str, Any]) -> str:
 BUILTIN_ADAPTERS: dict[str, Any] = {
     # Memory tiers (pure-Python, no shell)
     "context_retrieve": ContextRetrieveAdapter(),
+    "origin_fetch": OriginFetchAdapter(),
 
     # Filesystem
     "file_read": _make(lambda a: f"cat {_q(a['path'])}"),

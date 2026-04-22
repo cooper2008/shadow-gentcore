@@ -102,6 +102,24 @@ def _build_anthropic_tools(
                 },
             },
         },
+        "origin_fetch": {
+            "description": (
+                "Tier 3 — read a file directly from the origin source (e.g. a GitHub repo) "
+                "via the SourceAdapter cache. Use this only after context_retrieve returns "
+                "nothing useful — it costs more (network + log entry) but closes the "
+                "'answer lives outside my snapshot' gap. Scope-guarded: only paths matching "
+                "the agent's declared origin_fallback.scope glob are allowed."
+            ),
+            "input_schema": {
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {"type": "string", "description": "Relative path within the source (e.g. src/auth/session.py)."},
+                    "source_uri": {"type": "string", "description": "Optional explicit source URI (overrides agent default)."},
+                    "max_bytes": {"type": "integer", "default": 20000, "description": "Truncate returned file to this size."},
+                },
+            },
+        },
     }
 
     tools = []
