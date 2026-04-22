@@ -57,18 +57,21 @@ agent-contracts ← shadow-gentcore ← agent-tools ← domain-* (e.g. acme-back
 | `harness/providers/` | Anthropic, OpenAI, Bedrock, ClaudeCode, DryRun, SmokeTest, model_hints |
 | `harness/tools/builtin.py` | Built-in tool adapters incl. `context_retrieve`, `origin_fetch`, `memory_recall` |
 | `harness/cli/ai.py` | CLI entry point |
-| `agents/_genesis/` | 9 genesis agents: Scanner, Mapper, ToolDiscovery, ContextEngineer, **ToolSynthesizer**, Architect (v1+v2), Builder, QualityGate, Evolution |
+| `agents/_genesis/` | 13 genesis agents: Scanner, Mapper, **ConflictResolver**, **ContextVerifier**, ContextEngineer, ToolDiscovery, ToolSynthesizer, Architect (v1+v2), Builder, QualityGate, **DomainPlanner**, **HouseStyle**, Evolution |
 | `agents/_shared/` | ~23 reusable stage agents |
 | `config/` | rules.yaml, workspace.yaml, capabilities.yaml, industries.yaml, known_mcp_servers.yaml, tool_security.yaml |
 
-## Genesis pipeline (8 steps)
+## Genesis pipeline (10 steps)
 
 ```
-scan → map → {discover_tools, engineer_context} → synthesize_tools
-          → architect → build → validate
+scan → map → resolve → {discover_tools, engineer_context}
+          → verify → synthesize_tools → architect → build → validate
 ```
 
-Each step is single-shot where possible (preloaded context instead of react), emit-then-write where it has to write files. Works on MiniMax / GLM / Gemini 3 Pro without multi-turn tool_use hang.
+Single-shot where possible (preloaded context instead of react), emit-then-write
+for file producers. Coverage-aware gates at every layer; feedback loops verify→context,
+validate→build, validate→context. Adjacent workflows: `genesis_scan.yaml`
+(quick audit), `genesis_org_plan.yaml` (org-level roadmap), `maintenance/house_style_sync.yaml`.
 
 ## Docs index
 
@@ -85,7 +88,9 @@ Each step is single-shot where possible (preloaded context instead of react), em
 ## Testing
 
 ```bash
-.venv/bin/pytest harness/tests/ -q    # 1748 tests
+.venv/bin/pytest harness/tests/ -q    # 1869 tests
 ./ai test smoke                       # full journey (zero tokens)
 ./ai test smoke --cross-domain        # backend + frontend in parallel
+./ai validate-contracts --domain X    # prompt ↔ manifest drift
+./ai validate-contracts --domain X --llm-judge   # + semantic drift via LLM judge
 ```
