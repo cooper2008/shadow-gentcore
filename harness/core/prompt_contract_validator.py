@@ -182,7 +182,11 @@ _KNOWN_NATIVE_TOOLS = {
     "file_read", "file_write", "file_edit", "file_list",
     "list_dir", "search_files", "search_code", "shell_exec",
     "fetch_url",
-    "context_retrieve", "origin_fetch", "memory_recall",  # Memory tiers
+    # Memory tiers (1.5 → 4)
+    "list_paths",        # Tier 1.5 — file tree browse
+    "context_retrieve",  # Tier 2   — keyword-indexed chunks
+    "origin_fetch",      # Tier 3   — live origin re-fetch
+    "memory_recall",     # Tier 4   — past run memory
 }
 
 # Generic backtick-quoted words to IGNORE (they aren't tool calls).
@@ -343,6 +347,7 @@ _KNOWN_PRELOAD_NAMES = {
     "capabilities_config",
     "known_mcp_servers",
     "tool_security_policy",
+    "project_file_tree",   # Tier 1.5 file-tree map
 }
 
 

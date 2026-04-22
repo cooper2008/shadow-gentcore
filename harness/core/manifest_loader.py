@@ -72,6 +72,10 @@ def _build_preload_item(
         return _preload_known_mcp_servers()
     if preload_name == "tool_security_policy":
         return _preload_tool_security_policy()
+    if preload_name == "project_file_tree":
+        if not domain_root:
+            return None
+        return _preload_project_file_tree(Path(domain_root))
     logger.warning("Unknown context.preload source: %r", preload_name)
     return None
 
@@ -261,6 +265,102 @@ def _preload_tool_security_policy() -> dict[str, Any] | None:
             "```\n"
         ),
         "priority": 5,
+    }
+
+
+def _preload_project_file_tree(domain_root: Path) -> dict[str, Any] | None:
+    """Tier 1.5 — compact file-tree map for the domain's target code.
+
+    Agents call `origin_fetch(path)` to read files from the origin source,
+    but without a path map they have to guess. This preload injects a
+    summary view of the project layout (top 2-3 levels, skipping obvious
+    noise dirs) so the LLM has ground truth for what paths exist before
+    it hits Tier 3.
+
+    Walks `{domain_root}/src/` first, falls back to `{domain_root}` root
+    if no src/. Respects common ignore patterns and hard-caps output size
+    so we stay token-budget friendly.
+    """
+    # Candidate roots to scan, in preference order.
+    candidates = [
+        domain_root / "src",
+        domain_root / "app",
+        domain_root / "lib",
+        domain_root,  # fallback
+    ]
+    target = next((c for c in candidates if c.is_dir()), None)
+    if target is None:
+        return None
+
+    ignore_dirs = {
+        ".git", ".venv", "venv", "env", "__pycache__", "node_modules",
+        ".pytest_cache", ".mypy_cache", ".ruff_cache", "dist", "build",
+        ".cache", ".gentcore", ".idea", ".vscode", "target", "coverage",
+    }
+    ignore_file_suffixes = {".pyc", ".pyo", ".so", ".o", ".a", ".dylib",
+                            ".class", ".jar", ".lock", ".log"}
+
+    # DFS walk so the rendered indent reflects parent-child structure
+    # (BFS would intermix siblings across subtrees and look nested wrong).
+    MAX_ENTRIES = 400
+    MAX_DEPTH = 3
+
+    entries: list[tuple[int, Path, bool]] = []  # (depth, path, is_dir)
+
+    def _walk(cur: Path, depth: int) -> None:
+        if len(entries) >= MAX_ENTRIES or depth > MAX_DEPTH:
+            return
+        try:
+            children = sorted(cur.iterdir(), key=lambda p: (not p.is_dir(), p.name))
+        except (OSError, PermissionError):
+            return
+        for child in children:
+            if len(entries) >= MAX_ENTRIES:
+                return
+            name = child.name
+            if name.startswith(".") and name not in (".github",):
+                continue
+            if child.is_dir():
+                if name in ignore_dirs:
+                    continue
+                entries.append((depth, child, True))
+                _walk(child, depth + 1)
+            else:
+                if any(name.endswith(suf) for suf in ignore_file_suffixes):
+                    continue
+                entries.append((depth, child, False))
+
+    _walk(target, 1)
+
+    if not entries:
+        return None
+
+    # Render as a compact indented tree relative to target.
+    rel_target = target.relative_to(domain_root) if target != domain_root else Path(".")
+    lines = [
+        "# Project file tree (Tier 1.5 path map)",
+        "",
+        f"Root scanned: `{rel_target}/` (relative to domain).",
+        "Use this to pick paths for `origin_fetch(path)` instead of "
+        "guessing. For deeper browsing call `list_paths(prefix, depth)`.",
+        "",
+        f"```",
+        f"{rel_target}/",
+    ]
+    truncated = len(entries) >= MAX_ENTRIES
+    for depth, path, is_dir in entries:
+        rel = path.relative_to(target)
+        indent = "  " * depth
+        marker = "/" if is_dir else ""
+        lines.append(f"{indent}{rel.name}{marker}")
+    if truncated:
+        lines.append(f"... (truncated at {MAX_ENTRIES} entries — call `list_paths(prefix, depth)` to browse deeper)")
+    lines.append("```")
+
+    return {
+        "source": "preload:project_file_tree",
+        "content": "\n".join(lines),
+        "priority": 6,  # between standards (10) and reference chunks (5)
     }
 
 

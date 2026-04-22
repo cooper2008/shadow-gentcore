@@ -189,6 +189,108 @@ class MemoryRecallAdapter:
         }
 
 
+class ListPathsAdapter:
+    """Tier 1.5 — browse the project file tree without reading content.
+
+    Complements the preload:project_file_tree (static top-level map) with
+    on-demand deep browsing. Use when the preload truncated, or when you
+    need to drill into a specific subtree before calling `origin_fetch`.
+
+    Arguments:
+        prefix: string — path prefix to list (relative to domain_root).
+                Default "" = domain_root itself.
+        depth:  integer — max depth to recurse (default 2, max 5).
+        pattern: optional glob — filter filenames (e.g. "*.py").
+        max_entries: integer cap (default 200, max 500).
+        domain_root: injected by AgentRunner (optional override).
+
+    Output:
+        stdout: indented tree.
+        entries_returned / truncated flags.
+    """
+
+    async def invoke(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        import fnmatch
+
+        domain_root = Path(arguments.get("domain_root") or arguments.get("cwd") or ".").expanduser().resolve()
+        prefix = str(arguments.get("prefix", "")).strip().lstrip("/")
+        try:
+            depth_cap = min(int(arguments.get("depth", 2)), 5)
+        except (TypeError, ValueError):
+            depth_cap = 2
+        try:
+            max_entries = min(int(arguments.get("max_entries", 200)), 500)
+        except (TypeError, ValueError):
+            max_entries = 200
+        pattern = arguments.get("pattern")
+
+        root = (domain_root / prefix).resolve() if prefix else domain_root
+        # Scope guard: cannot escape domain_root via `..` etc.
+        try:
+            root.relative_to(domain_root)
+        except ValueError:
+            return {
+                "success": False, "stdout": "", "exit_code": 1,
+                "stderr": f"prefix {prefix!r} escapes domain_root (scope guard)",
+            }
+        if not root.exists() or not root.is_dir():
+            return {
+                "success": False, "stdout": "", "exit_code": 1,
+                "stderr": f"prefix {prefix!r} does not resolve to an existing directory",
+            }
+
+        ignore_dirs = {".git", ".venv", "venv", "__pycache__", "node_modules",
+                       ".pytest_cache", ".mypy_cache", ".ruff_cache", "dist",
+                       "build", ".cache", ".gentcore", "target", "coverage"}
+        entries: list[tuple[int, Path, bool]] = []
+
+        def _walk(cur: Path, depth: int) -> None:
+            # DFS so indent reflects parent-child (BFS would intermix siblings).
+            if len(entries) >= max_entries or depth > depth_cap:
+                return
+            try:
+                children = sorted(cur.iterdir(), key=lambda p: (not p.is_dir(), p.name))
+            except (OSError, PermissionError):
+                return
+            for child in children:
+                if len(entries) >= max_entries:
+                    return
+                name = child.name
+                if name.startswith(".") and name not in (".github",):
+                    continue
+                if child.is_dir():
+                    if name in ignore_dirs:
+                        continue
+                    entries.append((depth, child, True))
+                    _walk(child, depth + 1)
+                else:
+                    if pattern and not fnmatch.fnmatch(name, str(pattern)):
+                        continue
+                    entries.append((depth, child, False))
+
+        _walk(root, 1)
+
+        rel_prefix = prefix or "."
+        lines = [f"[list_paths] {rel_prefix}/", ""]
+        for depth, path, is_dir in entries:
+            rel = path.relative_to(root)
+            indent = "  " * depth
+            marker = "/" if is_dir else ""
+            lines.append(f"{indent}{rel.name}{marker}")
+        truncated = len(entries) >= max_entries
+        if truncated:
+            lines.append(f"[truncated at {max_entries} entries — narrow prefix or pattern for fewer results]")
+
+        return {
+            "success": True,
+            "stdout": "\n".join(lines),
+            "stderr": "",
+            "exit_code": 0,
+            "entries_returned": len(entries),
+            "truncated": truncated,
+        }
+
+
 class OriginFetchAdapter:
     """Tier 3 — live re-fetch from the origin source via SourceAdapter.
 
@@ -536,9 +638,10 @@ def _gh_pr_review(a: dict[str, Any]) -> str:
 
 BUILTIN_ADAPTERS: dict[str, Any] = {
     # Memory tiers (pure-Python, no shell)
-    "context_retrieve": ContextRetrieveAdapter(),
-    "origin_fetch": OriginFetchAdapter(),
-    "memory_recall": MemoryRecallAdapter(),
+    "list_paths": ListPathsAdapter(),           # Tier 1.5 — browse
+    "context_retrieve": ContextRetrieveAdapter(),  # Tier 2 — chunks
+    "origin_fetch": OriginFetchAdapter(),       # Tier 3 — live origin
+    "memory_recall": MemoryRecallAdapter(),     # Tier 4 — past runs
 
     # Filesystem
     "file_read": _make(lambda a: f"cat {_q(a['path'])}"),

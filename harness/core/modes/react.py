@@ -82,6 +82,24 @@ def _build_anthropic_tools(
             "description": "List files in a directory (ls -la)",
             "input_schema": {"type": "object", "properties": {"path": {"type": "string", "default": "."}}},
         },
+        "list_paths": {
+            "description": (
+                "Tier 1.5 — browse the project file tree without reading file "
+                "content. Use when the preloaded file-tree map was truncated "
+                "or when you need to discover paths before calling "
+                "`origin_fetch`. Scope-guarded to domain_root. Pattern is a "
+                "glob like '*.py'."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "prefix": {"type": "string", "description": "Path prefix (relative to domain root). Default: domain root itself."},
+                    "depth": {"type": "integer", "default": 2, "description": "How many levels to recurse. Max 5."},
+                    "pattern": {"type": "string", "description": "Optional glob filter for filenames (e.g. '*.py')."},
+                    "max_entries": {"type": "integer", "default": 200, "description": "Cap on returned entries. Max 500."},
+                },
+            },
+        },
         "context_retrieve": {
             "description": (
                 "Tier 2 — retrieve the top-K most relevant reference chunks for a topic. "
