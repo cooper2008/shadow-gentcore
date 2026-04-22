@@ -87,12 +87,105 @@ Available backends: `env`, `file`, `aws_secrets`, `vault`. `ChainedBackend` trie
 # Show what a specific agent needs
 ./ai credentials status --agent acme-backend/IncidentTriageAgent/v1
 
+# Per-domain matrix (every agent × every credential, with resolution status)
+./ai credentials status --domain /path/to/my-domain
+
 # Show required credentials for one agent (verbose)
 ./ai credentials required acme-backend/IncidentTriageAgent/v1
 
 # CI gate — exits non-zero if any required credential is unresolved
 ./ai credentials missing && echo "ok" || echo "has missing"
+
+# OAuth 2.0 setup — print one-time setup steps for an OAuth group
+./ai credentials oauth-setup google-drive
 ```
+
+## What Builder auto-emits per genesis run
+
+When `./ai genesis build` produces a domain, the `AgentBuilderAgent`
+post-execute hook:
+
+1. For each generated `agent_manifest.yaml`, computes the union of
+   credentials from its declared tools (via `CredentialRegistry`) and
+   stamps `required_credentials: [NAME1, NAME2, ...]` onto the manifest.
+2. Writes `<domain>/REQUIRED_CREDENTIALS.md` — a human-readable
+   team-lead checklist grouped by auth kind:
+   - **API keys and static credentials** — simple `export NAME=value` table
+   - **OAuth 2.0 app setups** — per-group blocks with credentials,
+     scopes, and a `./ai credentials oauth-setup <group>` pointer
+   - **Advanced auth** (basic, mTLS, AWS IAM) — separate table
+   - **Per-agent breakdown** — which agent uses which credentials
+
+No hand-authoring required. Team lead reads the doc, sets the values,
+domain works.
+
+## OAuth 2.0 groups
+
+OAuth integrations need multiple credentials — `client_id`,
+`client_secret`, `refresh_token` — plus a scopes list. The registry
+models these as one coherent group instead of three opaque env vars.
+
+### Declaring on a tool pack
+
+```yaml
+# agent-tools/src/agent_tools/packs/services/gdrive.yaml
+credentials:
+  - name: GOOGLE_OAUTH_CLIENT_ID
+    purpose: "OAuth client ID from Google Cloud console"
+    required: true
+    auth_kind: oauth2
+    oauth_group: google-drive
+    oauth_scopes: [drive.readonly, drive.metadata.readonly]
+  - name: GOOGLE_OAUTH_CLIENT_SECRET
+    purpose: "OAuth client secret (keep out of VCS)"
+    required: true
+    auth_kind: oauth2
+    oauth_group: google-drive
+    oauth_scopes: [drive.readonly, drive.metadata.readonly]
+  - name: GOOGLE_OAUTH_REFRESH_TOKEN
+    purpose: "Refresh token from initial authorization flow"
+    required: true
+    auth_kind: oauth2
+    oauth_group: google-drive
+    oauth_scopes: [drive.readonly, drive.metadata.readonly]
+```
+
+### Setup flow for the team lead
+
+```bash
+./ai credentials oauth-setup google-drive
+```
+
+Prints:
+
+```
+OAuth setup for group: google-drive
+
+Credentials needed (set all of these in your shell or secrets backend):
+  - GOOGLE_OAUTH_CLIENT_ID        — OAuth client ID from Google Cloud console
+  - GOOGLE_OAUTH_CLIENT_SECRET    — OAuth client secret
+  - GOOGLE_OAUTH_REFRESH_TOKEN    — obtained via initial authorization flow
+
+Scopes to request when creating the OAuth app:
+  - drive.metadata.readonly
+  - drive.readonly
+
+Suggested steps:
+  1. Register an OAuth app with the vendor.
+  2. Run the vendor's authorization URL flow with the scopes above.
+  3. Capture the refresh_token.
+  4. Export the three values above or store in config/credentials.yaml.
+  5. Verify: ./ai credentials status --domain <your-domain>
+```
+
+We don't run the OAuth dance ourselves — that needs per-vendor callback
+servers. This command surfaces exactly what the human needs to do.
+
+### Other auth kinds
+
+`auth_kind` supports: `api_key` (default), `oauth2`, `basic`, `mtls`,
+`aws_iam`. Builder's `REQUIRED_CREDENTIALS.md` groups by kind so Advanced
+auth sits in its own section.
 
 ## Preflight check
 

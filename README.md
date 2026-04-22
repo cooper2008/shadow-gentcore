@@ -25,6 +25,8 @@ curl -X POST localhost:8765/run -d '{"task": "Add /v1/health endpoint"}'
 
 Full guide → **[docs/QUICKSTART.md](docs/QUICKSTART.md)** · **[docs/USER_GUIDE_END_TO_END.md](docs/USER_GUIDE_END_TO_END.md)**
 
+Sources can be local **or remote** — point genesis at `github://acme/backend@main` and it fetches + scans via the source adapter (cached, SHA-addressed). Confluence / Notion / Jira scheme stubs in place for extension. See **[docs/SOURCE_ADAPTERS.md](docs/SOURCE_ADAPTERS.md)**.
+
 ---
 
 ## What it produces
@@ -101,10 +103,15 @@ Full setup → **[docs/PROVIDER_GUIDE.md](docs/PROVIDER_GUIDE.md)**.
 - **Multi-workflow per domain** — auto-discovered from git log + issue templates + CONTRIBUTING.md, dispatched via a router gate on `triage.yaml`
 - **Self-healing DAGs** — gates + retry-with-feedback + feedback_loops + reset_points + rollback + router/approval gates
 - **5 execution modes** — `react`, `plan_execute`, `chain_of_thought`, `self_ask`, `tree_of_thought`
+- **Tiered memory** — Tier 1 `standards.md` always-injected → Tier 2 `context_retrieve` (keyword-indexed chunks) → Tier 3 `origin_fetch` (live re-fetch via SourceAdapter cache, scope-guarded, audit-logged) → Tier 4 `memory_recall` (persistent JSONL store). No embeddings, no vector DB. See **[docs/MEMORY_GUIDE.md](docs/MEMORY_GUIDE.md)**.
 - **Catalog-first design** — Architect v2 picks from 23 reusable `_shared/` stage agents (TestRunner, Reviewer, Linter, Migration, SecurityScan, Compliance, RetrievalAgent, TriageAgent, ObservabilityAgent, …) before synthesising new ones
+- **Auto tool-gap closing** — `ToolSynthesizerAgent` closes gaps by wrapping existing MCP servers or synthesizing new tool packs, gated by a static security scanner
 - **6-layer permission engine** — platform rules non-negotiable, hot-reloadable from `config/rules.yaml`
-- **Per-model prompt nudges** — opt-in for weaker models (Minimax, Gemini Flash, GLM); strong models get no bloat
+- **Credential auto-propagation** — Builder stamps `required_credentials:` on each agent from declared tools; writes `REQUIRED_CREDENTIALS.md`; OAuth groups handled as first-class setup units
+- **Prompt ↔ manifest contract validator** — CI-grade static check that prompt promises match manifest reality (`./ai validate-contracts --domain <path>`)
+- **Per-model prompt nudges** — opt-in for weaker models (MiniMax, Gemini Flash, GLM); strong models get no bloat. Gemini 3 `thought_signature` auto-preserved.
 - **Schema-enforced output** — every agent declares `output_schema`; the validator + gate evaluator read fields directly
+- **Emit-then-write Builder** — single-turn LLM call emits `files: [{path, content}]`, Python hook writes. Works on MiniMax / GLM without multi-turn `file_write` hang.
 
 ---
 
@@ -112,15 +119,22 @@ Full setup → **[docs/PROVIDER_GUIDE.md](docs/PROVIDER_GUIDE.md)**.
 
 | Path | What |
 |------|------|
-| `harness/core/` | Engine — AgentRunner, CompositionEngine, RuleEngine, OutputValidator, **WorkflowResolver** |
-| `harness/core/expr.py` | Unified gate-condition evaluator |
+| `harness/core/` | Engine — AgentRunner, CompositionEngine, RuleEngine, OutputValidator, **WorkflowResolver**, MemoryStore |
+| `harness/core/expr.py` | Unified gate-condition evaluator (success/completed synonym) |
 | `harness/core/modes/` | 5 execution strategies (react / plan_execute / chain_of_thought / self_ask / tree_of_thought) |
-| `harness/providers/` | Anthropic, OpenAI, Bedrock, ClaudeCode, DryRun, SmokeTest, **model_hints** |
+| `harness/core/context_retriever.py` | Tier 2 — keyword-indexed chunk retrieval |
+| `harness/core/memory_store.py` | Tier 4 — FileMemoryStore + InMemoryMemoryStore |
+| `harness/core/source_adapters/` | URI-scheme dispatch (`github://`, `file://`, Confluence/Notion/Jira skeletons) |
+| `harness/core/credential_registry.py` | Credential declarations + resolution + OAuth groups |
+| `harness/core/tool_security_scanner.py` | Static scanner for synthesized tool packs |
+| `harness/core/prompt_contract_validator.py` | Prompt ↔ manifest drift check |
+| `harness/providers/` | Anthropic, OpenAI, Bedrock, ClaudeCode, DryRun, SmokeTest, **model_hints** (+Gemini 3 thought_signature round-trip) |
 | `harness/server/app.py` | FastAPI agent service — `/run`, `/run/agent`, `/run/workflow`, `/agents`, approval endpoints |
 | `harness/cli/ai.py` | `./ai` CLI |
-| `agents/_genesis/` | 8 genesis agents — the builders |
+| `harness/tools/builtin.py` | Built-in tool adapters incl. `context_retrieve`, `origin_fetch`, `memory_recall` |
+| `agents/_genesis/` | 9 genesis agents — Scanner, Mapper, ToolDiscovery, ContextEngineer, ToolSynthesizer, Architect (v1+v2), Builder, QualityGate, Evolution |
 | `agents/_shared/` | 23 reusable stage agents |
-| `config/` | `rules.yaml`, `workspace.yaml`, `capabilities.yaml`, `industries.yaml` |
+| `config/` | `rules.yaml`, `workspace.yaml`, `capabilities.yaml`, `industries.yaml`, `known_mcp_servers.yaml`, `tool_security.yaml` |
 | `scripts/` | Runnable examples — smoke + real-LLM harnesses for 5+ providers |
 
 ---
@@ -131,7 +145,10 @@ Full setup → **[docs/PROVIDER_GUIDE.md](docs/PROVIDER_GUIDE.md)**.
 |-----|--------------|
 | [QUICKSTART.md](docs/QUICKSTART.md) | First time — 5 minutes to a running agent |
 | [USER_GUIDE_END_TO_END.md](docs/USER_GUIDE_END_TO_END.md) | Full user journey + override examples |
-| [PROVIDER_GUIDE.md](docs/PROVIDER_GUIDE.md) | Wiring an LLM (native or compat gateway) |
+| [MEMORY_GUIDE.md](docs/MEMORY_GUIDE.md) | Tier 1–5 memory architecture (standards → chunks → origin_fetch → memory_recall → evolution) |
+| [SOURCE_ADAPTERS.md](docs/SOURCE_ADAPTERS.md) | Reading from GitHub / Confluence / Notion / Jira as genesis input |
+| [CREDENTIALS_GUIDE.md](docs/CREDENTIALS_GUIDE.md) | API keys + OAuth2 groups, auto-propagation to agents |
+| [PROVIDER_GUIDE.md](docs/PROVIDER_GUIDE.md) | Wiring an LLM (native or compat gateway, incl. Gemini 3.1 Pro) |
 | [AUTOMATION_GUIDE.md](docs/AUTOMATION_GUIDE.md) | CI / cron / webhook patterns |
 | [SYSTEM_GUIDE.md](docs/SYSTEM_GUIDE.md) | Deep architecture |
 | [TEAM_GUIDE.md](docs/TEAM_GUIDE.md) | Operational patterns for domain teams |
@@ -143,7 +160,8 @@ Full setup → **[docs/PROVIDER_GUIDE.md](docs/PROVIDER_GUIDE.md)**.
 ## Tests
 
 ```bash
-.venv/bin/pytest harness/tests/ -q     # 1509 tests
-./ai test smoke                        # full journey, zero tokens
-./ai test smoke --cross-domain         # backend + frontend in parallel
+.venv/bin/pytest harness/tests/ -q          # 1748 tests
+./ai test smoke                             # full journey, zero tokens
+./ai test smoke --cross-domain              # backend + frontend in parallel
+./ai validate-contracts --domain <path>     # CI gate: prompt ↔ manifest drift check
 ```
