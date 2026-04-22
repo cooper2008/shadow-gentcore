@@ -176,14 +176,36 @@ class GitHubAdapter(SourceAdapter):
         # the single child up so `dest` contains repo contents directly.
         with tempfile.TemporaryDirectory() as tmpd:
             with tarfile.open(fileobj=BytesIO(resp.content), mode="r:gz") as tf:
-                # Safe-extract guard: reject absolute paths and traversal.
+                # Safe-extract guard — CVE-class hardening:
+                # (1) Reject absolute paths and `..` traversal.
+                # (2) Reject symlinks / hardlinks (tarfile.extractall honors
+                #     them; a malicious repo could plant a link to
+                #     ~/.ssh/id_rsa or /etc/passwd then write through it).
+                # (3) Reject device/fifo/char special files — never appear
+                #     in legitimate source tarballs.
+                # (4) Reject absolute symlink/hardlink targets too.
                 for member in tf.getmembers():
                     name = member.name
                     if name.startswith("/") or ".." in Path(name).parts:
                         raise RuntimeError(
                             f"Refusing to extract unsafe tar member: {name!r}"
                         )
-                tf.extractall(tmpd)
+                    if member.issym() or member.islnk():
+                        raise RuntimeError(
+                            f"Refusing symlink/hardlink tar member: {name!r} "
+                            f"→ {member.linkname!r} (TarSlip guard)"
+                        )
+                    if member.ischr() or member.isblk() or member.isfifo() or member.isdev():
+                        raise RuntimeError(
+                            f"Refusing non-regular tar member: {name!r} "
+                            f"(type={member.type!r})"
+                        )
+                # Python 3.12+: extra belt-and-suspenders via extraction filter.
+                # On 3.11 this is a no-op.
+                try:
+                    tf.extractall(tmpd, filter="data")  # type: ignore[call-arg]
+                except TypeError:
+                    tf.extractall(tmpd)
             children = [p for p in Path(tmpd).iterdir() if p.is_dir()]
             if len(children) != 1:
                 raise RuntimeError(

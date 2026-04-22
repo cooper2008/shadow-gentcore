@@ -101,7 +101,13 @@ def scan_pack_yaml(
     if not policy:
         return []
     try:
-        data = yaml.safe_load(pack_content) or {}
+        from harness.core.yaml_safe import safe_load as _safe_load, YamlLoadError
+        data = _safe_load(pack_content, source=pack_id) or {}
+    except YamlLoadError as exc:
+        return [ScanFinding(
+            rule_id="yaml-parse-error", severity="block", pack_id=pack_id,
+            location="root", message=f"Pack YAML rejected: {str(exc)[:160]}",
+        )]
     except Exception as exc:
         return [ScanFinding(
             rule_id="yaml-parse-error", severity="block", pack_id=pack_id,
@@ -109,7 +115,7 @@ def scan_pack_yaml(
         )]
 
     effective_id = data.get("id") or pack_id
-    allowlist = _build_allowlist(policy, effective_id)
+    allowlist = _build_allowlist(policy, effective_id, pack_content)
 
     findings: list[ScanFinding] = []
     for checker in _RULE_CHECKERS:
@@ -370,10 +376,47 @@ def _check_auto_generated_marker(
     return []
 
 
+def _check_no_internal_url_targets(
+    data: dict[str, Any], raw: str, pack_id: str, policy: dict[str, Any],
+) -> list[ScanFinding]:
+    """BLOCK: URL templates must not target internal / metadata / private-range
+    hosts. LLM-synthesized packs can emit tools pointing at `169.254.169.254`
+    (AWS IMDS → credential theft), `[::1]`, `0.0.0.0`, or RFC1918 ranges.
+
+    Note: this is STATIC string matching only — runtime DNS rebinding or
+    redirects to internal hosts are out of scope. A future runtime egress
+    policy should complement this (see SECURITY_GUIDE next phase).
+    """
+    tools = data.get("tools") or []
+    findings: list[ScanFinding] = []
+    for idx, t in enumerate(tools):
+        if not isinstance(t, dict):
+            continue
+        for field_name in ("base_url", "url", "endpoint", "path_template"):
+            val = t.get(field_name) or ""
+            if not isinstance(val, str):
+                continue
+            host = _extract_host(val)
+            if host and _is_forbidden_internal_host(host):
+                findings.append(ScanFinding(
+                    rule_id="urls-no-internal-targets",
+                    severity="block",
+                    pack_id=pack_id,
+                    location=f"tools[{idx}].{field_name}",
+                    message=(
+                        f"URL targets internal/metadata/private-range host "
+                        f"{host!r} — blocked to prevent SSRF / credential "
+                        f"theft via cloud metadata endpoints."
+                    ),
+                ))
+    return findings
+
+
 _RULE_CHECKERS: list[Callable[..., list[ScanFinding]]] = [
     _check_creds_declared_for_authed_tools,
     _check_no_hardcoded_secrets,
     _check_safe_url_templates,
+    _check_no_internal_url_targets,
     _check_shell_permission,
     _check_no_inline_scripts,
     _check_timeouts_bounded,
@@ -395,6 +438,82 @@ def _is_local_url(u: str) -> bool:
     )
 
 
+def _extract_host(url_or_template: str) -> str | None:
+    """Pull the host token out of a URL (or URL template) literal.
+
+    Intentionally string-level — we're not trying to do DNS resolution
+    here, just surface obvious bad literals in YAML.
+    Returns lowercase host without port, or None if not extractable.
+    """
+    import re as _re
+    from urllib.parse import urlparse as _urlparse
+    s = (url_or_template or "").strip()
+    if not s:
+        return None
+    # URL templates sometimes have `${var}` before the scheme — strip to literal.
+    # We intentionally only attempt to extract when a real scheme is present.
+    if "://" not in s:
+        return None
+    try:
+        parsed = _urlparse(s)
+        host = parsed.hostname or ""
+    except Exception:
+        return None
+    host = host.lower()
+    # Strip IPv6 brackets for the host-check helpers that expect plain IP text.
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    return host or None
+
+
+def _is_forbidden_internal_host(host: str) -> bool:
+    """True if `host` points at a metadata / link-local / private-range target.
+
+    Targets we explicitly block (well-known SSRF abuse surface):
+      - 169.254.169.254 (AWS IMDS; GCP and Alibaba use this too)
+      - fd00::/8 and fe80::/10 (IPv6 unique-local + link-local)
+      - 0.0.0.0 (binds-to-all sentinel)
+      - IPv4 RFC1918: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+      - IPv4 link-local: 169.254.0.0/16 (covers IMDS range)
+      - Loopback: 127.0.0.0/8 (but NOT localhost — that's allowed as a
+        genuine local-only development target via existing rule)
+      - IPv6 loopback: ::1
+      - `metadata.google.internal` / `metadata.azure.com` hostnames
+
+    Note: runtime DNS rebinding / redirect-after-DNS is NOT covered by
+    static analysis. Future runtime egress policy should re-check on
+    every hop.
+    """
+    import ipaddress
+    h = host.strip().lower()
+    if not h:
+        return False
+    # Well-known metadata hostnames
+    if h in {
+        "metadata.google.internal",
+        "metadata",
+        "metadata.azure.com",
+        "metadata.tencentyun.com",
+        "100.100.100.200",  # Alibaba metadata
+    }:
+        return True
+    # 0.0.0.0 sentinel
+    if h in {"0.0.0.0", "::"}:
+        return True
+    # Try as IP literal (IPv4 or IPv6)
+    try:
+        ip = ipaddress.ip_address(h)
+    except ValueError:
+        return False  # hostname — can't resolve without DNS; runtime guard needed
+    return (
+        ip.is_private           # RFC1918 / ULA
+        or ip.is_link_local     # 169.254/16, fe80::/10 (includes IMDS)
+        or ip.is_loopback       # 127.0.0.0/8, ::1
+        or ip.is_reserved       # multicast / doc-use / etc.
+        or ip.is_multicast
+    )
+
+
 def _find_rule(policy: dict[str, Any], rule_id: str, key: str) -> Any:
     """Pull `key` out of the rule matching `rule_id`."""
     for r in policy.get("rules", []) or []:
@@ -403,11 +522,77 @@ def _find_rule(policy: dict[str, Any], rule_id: str, key: str) -> Any:
     return None
 
 
-def _build_allowlist(policy: dict[str, Any], pack_id: str) -> set[str]:
-    """Return rule_ids downgradable-to-warn for this pack."""
+def _build_allowlist(
+    policy: dict[str, Any],
+    pack_id: str,
+    pack_content: str = "",
+) -> set[str]:
+    """Return rule_ids downgradable-to-warn for this pack.
+
+    Hardened matching (prior review flagged plain pack_id match as a
+    foot-gun). An allowlist entry is honored ONLY when ALL of:
+      * `pack_id` matches exactly
+      * `content_sha256` matches the actual pack body (defends against
+        pack drift — content changes → allowlist no longer applies)
+      * `expires` (ISO-8601 date) is in the future
+
+    Entries missing content_sha256 or expires are REJECTED with a log
+    warning. Tighten the cost of adding a downgrade so it can't be a
+    silent blanket bypass.
+    """
+    import datetime as _dt
+    import hashlib as _hashlib
+
     allowlist: set[str] = set()
+    now = _dt.datetime.now(_dt.timezone.utc)
+    body_sha = _hashlib.sha256(pack_content.encode("utf-8")).hexdigest() if pack_content else ""
+
     for entry in policy.get("allowlist", []) or []:
-        if isinstance(entry, dict) and entry.get("pack_id") == pack_id:
-            for rule_id in entry.get("downgrade", []) or []:
-                allowlist.add(str(rule_id))
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("pack_id") != pack_id:
+            continue
+
+        expected_sha = str(entry.get("content_sha256") or "").strip().lower()
+        expires_raw = str(entry.get("expires") or "").strip()
+        if not expected_sha or not expires_raw:
+            logger.warning(
+                "Ignoring security allowlist entry for %s — missing "
+                "content_sha256 and/or expires (required for hardening).",
+                pack_id,
+            )
+            continue
+
+        # Content-hash binding: allowlist breaks if the pack body drifts.
+        if body_sha and expected_sha != body_sha:
+            logger.warning(
+                "Ignoring security allowlist entry for %s — content_sha256 "
+                "does not match current pack body (expected %s, got %s). "
+                "Pack content drifted; re-review + refresh allowlist entry.",
+                pack_id, expected_sha[:12], body_sha[:12],
+            )
+            continue
+
+        # Expiry binding: force periodic re-review.
+        try:
+            exp = _dt.datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=_dt.timezone.utc)
+        except ValueError:
+            logger.warning(
+                "Ignoring security allowlist entry for %s — expires=%r is "
+                "not a valid ISO date.",
+                pack_id, expires_raw,
+            )
+            continue
+        if exp < now:
+            logger.warning(
+                "Ignoring expired security allowlist entry for %s "
+                "(expired %s). Re-review + refresh to extend.",
+                pack_id, exp.isoformat(),
+            )
+            continue
+
+        for rule_id in entry.get("downgrade", []) or []:
+            allowlist.add(str(rule_id))
     return allowlist

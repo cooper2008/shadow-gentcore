@@ -285,15 +285,25 @@ class TestScanDirectoryAndAggregation:
 
 class TestAllowlist:
     def test_allowlist_downgrades_block_to_warn(self, policy):
-        # Forge a policy with an allowlist entry for this pack
+        # Post-hardening: allowlist entries require content_sha256 + future
+        # `expires` to prevent silent blanket bypass. See P0-4 in the
+        # cross-model review follow-up.
+        import datetime as _dt
+        import hashlib as _hashlib
+
+        pack = TestRuleShellPermission.BAD_SHELL_PACK
+        sha = _hashlib.sha256(pack.encode("utf-8")).hexdigest()
+        future = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=30)).isoformat()
+
         forked = {
             **policy,
-            "allowlist": [{"pack_id": "toolpack://auto/bad-shell",
-                           "downgrade": ["shell-requires-explicit-permission"]}],
+            "allowlist": [{
+                "pack_id": "toolpack://auto/bad-shell",
+                "content_sha256": sha,
+                "expires": future,
+                "downgrade": ["shell-requires-explicit-permission"],
+            }],
         }
-        pack = TestRuleShellPermission.BAD_SHELL_PACK.replace(
-            "toolpack://auto/bad-shell", "toolpack://auto/bad-shell"
-        )
         findings = scan_pack_yaml(pack, "toolpack://auto/bad-shell", forked)
         shell_findings = [f for f in findings
                           if f.rule_id == "shell-requires-explicit-permission"]

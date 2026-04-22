@@ -68,7 +68,11 @@ class TestDirectoryStructure:
     def test_required_file_exists(self, file_path: str) -> None:
         assert (REPO_ROOT / file_path).is_file(), f"Missing file: {file_path}"
 
-    def test_claude_md_under_60_lines(self) -> None:
+    def test_claude_md_under_100_lines(self) -> None:
+        # Cap grew 60→100 when memory tiers / source adapters / security
+        # scanner / contract validator entered the "quick reference" block
+        # in Q2 2026. Intent is still "not a 500-line dumping ground" —
+        # detail belongs in SYSTEM_GUIDE / MEMORY_GUIDE / etc.
         content = (REPO_ROOT / "CLAUDE.md").read_text()
         lines = content.strip().split("\n")
-        assert len(lines) <= 60, f"CLAUDE.md is {len(lines)} lines, must be ≤60 (point to SYSTEM_GUIDE for detail)"
+        assert len(lines) <= 100, f"CLAUDE.md is {len(lines)} lines, must be ≤100 (move detail to dedicated docs)"

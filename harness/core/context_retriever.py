@@ -50,6 +50,21 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
+def _phrase_contained(container: str, phrase: str) -> bool:
+    """True if `phrase` appears in `container` on word boundaries.
+
+    Prevents `auth` from matching `oauth` (no word-boundary between
+    'o' and 'a'). Reviewers flagged the previous direction-agnostic
+    substring check as over-rewarding short generic queries.
+    """
+    phrase = phrase.strip()
+    if not phrase or not container:
+        return False
+    # Bounded by non-word OR start/end of string
+    pattern = r"(?:\A|\W)" + re.escape(phrase) + r"(?:\Z|\W)"
+    return bool(re.search(pattern, container))
+
+
 @dataclass(frozen=True)
 class ChunkRef:
     id: str
@@ -62,16 +77,20 @@ class ChunkRef:
     def score_for(self, topic: str, keywords: tuple[str, ...], doc_freq: dict[str, int]) -> float:
         """Relevance score for a (topic, keywords) query.
 
-        - Topic substring match (direction-agnostic, case-insensitive) ⇒ +2.0
-        - Topic word overlap ⇒ +1.0 per word
+        - Topic phrase containment (word-bounded, both directions) ⇒ +2.0
+          The phrase must be ≥3 chars AND appear on word boundaries
+          (prevents `auth` from +2.0-matching `oauth token refresh`).
+        - Topic word overlap ⇒ +1.0 per meaningful (>2 char) word
         - Keyword overlap with inverse-rarity weighting ⇒ +1/log(1+df) per match
-        - Normalized by chunk size so long grab-bag docs don't dominate.
+        - Size penalty for chunks >5KB so grab-bags don't dominate.
         """
         score = 0.0
         topic_lc = topic.strip().lower()
         chunk_topic_lc = self.topic.lower()
-        if topic_lc and (topic_lc in chunk_topic_lc or chunk_topic_lc in topic_lc):
-            score += 2.0
+        if topic_lc and len(topic_lc) >= 3 and len(chunk_topic_lc) >= 3:
+            # Word-bounded phrase containment (either direction).
+            if _phrase_contained(chunk_topic_lc, topic_lc) or _phrase_contained(topic_lc, chunk_topic_lc):
+                score += 2.0
         topic_words = {w for w in re.findall(r"\w+", topic_lc) if len(w) > 2}
         chunk_topic_words = set(re.findall(r"\w+", chunk_topic_lc))
         score += 1.0 * len(topic_words & chunk_topic_words)
@@ -105,7 +124,14 @@ class ReferenceIndex:
             logger.info("No reference_index.yaml at %s — Tier 2 retrieval disabled", idx_path)
             return cls(chunks=[], root=domain_root)
         try:
-            data = yaml.safe_load(idx_path.read_text(encoding="utf-8")) or {}
+            # Hardened YAML load — defends against Billion-Laughs / oversize
+            # payloads in reference_index.yaml (generated content can be
+            # adversarial if a source repo is hostile).
+            from harness.core.yaml_safe import safe_load as _safe_load
+            data = _safe_load(
+                idx_path.read_text(encoding="utf-8"),
+                source=str(idx_path),
+            ) or {}
         except Exception as exc:
             logger.warning("Failed to parse reference_index.yaml: %s", exc)
             return cls(chunks=[], root=domain_root)
