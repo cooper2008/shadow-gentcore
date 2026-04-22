@@ -22,8 +22,10 @@ Caching:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import random
 import shutil
 import tarfile
 import tempfile
@@ -35,6 +37,74 @@ from urllib.parse import parse_qs, urlparse
 from harness.core.source_adapters.base import SourceAdapter, SourceSpec
 
 logger = logging.getLogger(__name__)
+
+# Bound parallel GitHub API calls so N concurrent resolve_source() calls
+# don't stampede the API. Default 3 is conservative; set
+# GENTCORE_GITHUB_CONCURRENCY to change.
+_GITHUB_MAX_CONCURRENT = int(os.environ.get("GENTCORE_GITHUB_CONCURRENCY", "3"))
+_github_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    """Lazy-init semaphore in the current event loop."""
+    global _github_semaphore
+    if _github_semaphore is None:
+        _github_semaphore = asyncio.Semaphore(_GITHUB_MAX_CONCURRENT)
+    return _github_semaphore
+
+
+async def _http_get_with_backoff(
+    client: Any,
+    url: str,
+    *,
+    headers: dict[str, str],
+    max_attempts: int = 5,
+    base_backoff: float = 1.0,
+) -> Any:
+    """GET with rate-limit-aware retry.
+
+    Retry on 429 (Too Many Requests) and 5xx. Honor Retry-After header
+    when present. Exponential backoff with jitter otherwise. Logs
+    GitHub's X-RateLimit-Remaining so slow drift toward the quota cap
+    is visible in operational logs.
+    """
+    import httpx
+
+    for attempt in range(1, max_attempts + 1):
+        resp = await client.get(url, headers=headers)
+        # Surface quota status — always; cheap.
+        remaining = resp.headers.get("X-RateLimit-Remaining")
+        if remaining is not None:
+            try:
+                if int(remaining) < 100:
+                    logger.warning(
+                        "GitHub rate-limit remaining is low: %s (url=%s)",
+                        remaining, url,
+                    )
+            except ValueError:
+                pass
+
+        if resp.status_code == 429 or 500 <= resp.status_code < 600:
+            if attempt >= max_attempts:
+                return resp
+            retry_after_hdr = resp.headers.get("Retry-After", "")
+            try:
+                delay = float(retry_after_hdr) if retry_after_hdr else 0.0
+            except ValueError:
+                delay = 0.0
+            if delay <= 0.0:
+                # Exponential backoff with 0-50% jitter
+                delay = base_backoff * (2 ** (attempt - 1))
+                delay += random.uniform(0, delay * 0.5)
+            logger.info(
+                "GitHub %s — retry %d/%d after %.1fs (url=%s)",
+                resp.status_code, attempt, max_attempts, delay, url,
+            )
+            await asyncio.sleep(delay)
+            continue
+
+        return resp
+    return resp  # type: ignore[return-value]
 
 
 def _parse_github_uri(uri: str) -> dict[str, Any]:
@@ -131,6 +201,7 @@ class GitHubAdapter(SourceAdapter):
 
         GitHub's `GET /repos/{org}/{repo}/commits/{ref}` returns the commit
         object for the tip of the branch/tag, or the commit itself for a SHA.
+        Uses shared concurrency semaphore + rate-limit-aware retry.
         """
         import httpx
 
@@ -138,8 +209,9 @@ class GitHubAdapter(SourceAdapter):
         headers = {"Accept": "application/vnd.github+json"}
         if token:
             headers["Authorization"] = f"token {token}"
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(url, headers=headers)
+        async with _get_semaphore():
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await _http_get_with_backoff(client, url, headers=headers)
         if resp.status_code == 404:
             raise FileNotFoundError(
                 f"GitHub repo or ref not found: {org}/{repo}@{ref} "
@@ -167,8 +239,10 @@ class GitHubAdapter(SourceAdapter):
         headers: dict[str, str] = {"Accept": "application/vnd.github+json"}
         if token:
             headers["Authorization"] = f"token {token}"
-        async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-            resp = await client.get(url, headers=headers)
+        # Tarball fetch shares the global GitHub semaphore + retry policy.
+        async with _get_semaphore():
+            async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
+                resp = await _http_get_with_backoff(client, url, headers=headers)
         resp.raise_for_status()
 
         # GitHub wraps everything in a single top-level dir like

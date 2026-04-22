@@ -253,6 +253,7 @@ class TestGitHubAdapterMocked:
 
         class Fake404Response:
             status_code = 404
+            headers: dict[str, str] = {}  # retry helper reads rate-limit headers
 
             def raise_for_status(self):
                 raise httpx.HTTPStatusError("404", request=None, response=self)  # type: ignore[arg-type]
