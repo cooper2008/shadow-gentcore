@@ -119,6 +119,12 @@ output_schema:
         packs_planned: {type: integer}
         rationale: {type: string}
 
+permissions:
+  file_edit: allow            # Writes new tool pack YAMLs under tools/auto/.
+  file_create: allow
+  shell_command: deny
+  network_access: deny         # Preloaded catalog only — no live network.
+
 grading_criteria_ref: grading_criteria.yaml
 
 metadata:

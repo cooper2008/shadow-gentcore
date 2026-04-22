@@ -40,9 +40,20 @@ input_schema:
   type: object
   required: [knowledge_map]
   properties:
+    resolved_knowledge_map:
+      type: object
+      description: >-
+        Preferred. Output of ConflictResolverAgent — same shape as
+        knowledge_map, but every item carries source_attribution and
+        losers are broken out into contested_items. When present, use
+        this in preference to knowledge_map.
+    contested_items:
+      type: array
+      description: "Optional companion to resolved_knowledge_map — renders a 'Contested rules' footer in standards.md."
+      items: {type: object}
     knowledge_map:
       type: object
-      description: "Classified knowledge map from KnowledgeMapperAgent"
+      description: "Classified knowledge map from KnowledgeMapperAgent (fallback when resolved_knowledge_map is absent)"
     scan_result:
       type: object
       description: "Source scan inventory from SourceScannerAgent (optional — for reading source docs)"

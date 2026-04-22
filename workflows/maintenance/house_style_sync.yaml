@@ -1,0 +1,35 @@
+name: house_style_sync
+domain: _genesis
+version: "1.0.0"
+description: >-
+  Maintenance workflow that synchronizes cross-domain standards into a
+  single `org_standards.md` and writes per-domain divergence reports.
+  Run manually or on a schedule after ≥ 2 domains have been built by
+  `genesis_build`. Uses the existing DomainRegistry — does NOT require
+  any new workspace.yaml fields.
+
+steps:
+  - name: sync
+    agent: _genesis/HouseStyleAgent/v1
+    description: "Read every registered domain's standards.md, emit org_standards.md + divergence reports."
+    gate:
+      name: sync_gate
+      # At minimum we need the org doc written + summary populated.
+      condition: "status == success and output.org_standards_path is not None and output.sync_summary.domains_scanned >= 1"
+      on_fail: retry
+      max_retries: 1
+
+budget:
+  max_tokens: 80000
+  max_cost_usd: 4.0
+  max_duration_seconds: 600
+
+metadata:
+  author: platform-team
+  tags: [genesis, maintenance, cross-domain, house-style]
+  trigger: manual-or-scheduled
+  followup:
+    - description: >-
+        Divergence reports are consumed by existing
+        `validate.issues.cross_reference` feedback loops the next time
+        a divergent domain is rebuilt via genesis_build. No new wiring.

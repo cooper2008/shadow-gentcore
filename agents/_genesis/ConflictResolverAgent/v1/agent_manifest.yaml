@@ -1,0 +1,116 @@
+id: _genesis/ConflictResolverAgent/v1
+domain: _genesis
+pack: core
+category: reasoning
+version: "1.0.0"
+description: "Resolves contradictions between multiple reference repos and versioned docs. Produces resolved_knowledge_map with per-rule source attribution + contested_items. Third agent in the Genesis pipeline."
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: react
+  max_react_steps: 10
+
+tools:
+  - name: file_read
+    description: "Read doc front-matter (YAML frontmatter / headers) to detect supersedes/deprecates markers"
+    pack: "toolpack://core/filesystem"
+  - name: list_dir
+    description: "Check sibling files when detecting version families"
+    pack: "toolpack://core/search"
+
+constraints:
+  no_file_modification: true
+  read_only: true
+
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+
+input_schema:
+  type: object
+  required: [knowledge_map]
+  properties:
+    knowledge_map:
+      type: object
+      description: "Classified knowledge map from KnowledgeMapperAgent"
+    scan_result:
+      type: object
+      description: "Original SourceScanner inventory — carries content_ref paths for each item"
+    repos:
+      type: object
+      description: "Repo-role map from workspace.yaml (optional — tiebreaker 4). Keys are repo names, values carry {role, path}."
+    industry:
+      type: string
+
+output_schema:
+  type: object
+  required: [resolved_knowledge_map, contested_items, resolution_summary]
+  properties:
+    resolved_knowledge_map:
+      type: object
+      description: >-
+        Same shape as input knowledge_map, but every rule/standard/policy entry
+        carries source_attribution and, when applicable, supersedes[]. Passes
+        through unchanged when no conflicts are detected.
+      properties:
+        standards_sources: {type: array, items: {type: object}}
+        reference_topics: {type: array, items: {type: object}}
+        workflow_processes: {type: array, items: {type: object}}
+        compliance_rules: {type: array, items: {type: object}}
+        output_templates: {type: array, items: {type: object}}
+        glossary_terms: {type: array, items: {type: object}}
+        roles: {type: array, items: {type: object}}
+        training_content: {type: array, items: {type: object}}
+        examples: {type: array, items: {type: object}}
+        unclassified: {type: array, items: {type: object}}
+    contested_items:
+      type: array
+      description: "Rules where ≥2 sources disagreed. Winner chosen per tiebreaker ladder."
+      items:
+        type: object
+        required: [category, topic, winner, alternatives, tiebreaker_applied, confidence]
+        properties:
+          category:
+            type: string
+            description: "Which knowledge_map category the contested item belongs to"
+          topic:
+            type: string
+            description: "Short label for the disagreement (e.g. 'naming_convention', 'auth_policy_v2_vs_v1')"
+          winner:
+            type: object
+            description: "The rule/item that won, with source_attribution populated"
+          alternatives:
+            type: array
+            description: "Other candidates that lost, each with source + reasoning"
+            items: {type: object}
+          tiebreaker_applied:
+            type: string
+            enum: [frontmatter_supersedes, filename_version, mtime_newer, repo_role, git_recency, fallback_keep_all]
+          confidence:
+            type: number
+            minimum: 0
+            maximum: 1
+          needs_human:
+            type: boolean
+            description: "True iff confidence < 0.6 and the agent is asking for human arbitration"
+    resolution_summary:
+      type: object
+      required: [total_items, contested_count, auto_resolved, needs_human_count]
+      properties:
+        total_items: {type: integer}
+        contested_count: {type: integer}
+        auto_resolved: {type: integer}
+        needs_human_count: {type: integer}
+        version_families_found: {type: integer}
+        notes:
+          type: array
+          items: {type: string}
+
+grading_criteria_ref: grading_criteria.yaml
+
+metadata:
+  author: platform-team
+  tags: [genesis, conflict-resolution, versioning, meta-agent]

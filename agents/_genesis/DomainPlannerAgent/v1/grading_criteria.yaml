@@ -1,0 +1,49 @@
+threshold: 0.80
+
+criteria:
+  - name: decision_present
+    type: automated
+    weight: 2.0
+    check: "decision in ['auto-split', 'single-domain', 'ask-human']"
+
+  - name: plan_nonempty
+    type: automated
+    weight: 1.5
+    check: "len(domain_plan) >= 1"
+
+  - name: confidence_values_valid
+    type: automated
+    weight: 1.0
+    check: "len([d for d in domain_plan if d.confidence is not None and d.confidence >= 0 and d.confidence <= 1]) == len(domain_plan)"
+
+  - name: ask_human_populated_when_needed
+    type: automated
+    weight: 1.5
+    check: "decision != 'ask-human' or len(ambiguous_items) >= 1"
+
+  - name: grouping_discipline
+    type: llm_judge
+    weight: 2.0
+    prompt: >-
+      Did the planner group repos using observable signals (tech stack,
+      CODEOWNERS, dep graph, doc reach, repo role) and cite them in
+      `rationale`? Penalize any grouping that reads like a guess or that
+      invents signals not backed by the metadata the agent could read.
+
+  - name: config_minimalism
+    type: llm_judge
+    weight: 1.5
+    prompt: >-
+      Check that the agent did NOT ask the user to add new workspace.yaml
+      fields (priority, supersedes_older, precedence, etc.). It may only
+      ask the user to resolve specific ambiguous items (a question, not a
+      yaml edit). Reuse of the existing `role` / `industry` / `focus`
+      keys is fine.
+
+  - name: budget_respected
+    type: llm_judge
+    weight: 1.0
+    prompt: >-
+      Did the agent stay shallow (top-level list_dir + small metadata
+      reads only) and avoid deep-scanning source trees? SourceScanner
+      runs after it — the planner duplicating that work is a failure.

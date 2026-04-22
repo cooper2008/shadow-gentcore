@@ -104,11 +104,14 @@ class TestBootEngineWiring:
         assert engine._agent_runner is not None
         assert engine._output_validator is not None
 
-        # All 8 steps have configs (synthesize_tools added in Phase A)
-        assert len(step_configs) == 8
+        # Genesis Complexity Upgrade grew the pipeline from 8 -> 10 steps by
+        # inserting ConflictResolverAgent (resolve) between map and the
+        # tools/context fan-out, and ContextVerifierAgent (verify) after
+        # engineer_context.
+        assert len(step_configs) == 10
         expected_steps = {
-            "scan", "map", "discover_tools", "engineer_context",
-            "synthesize_tools", "architect", "build", "validate",
+            "scan", "map", "resolve", "discover_tools", "engineer_context",
+            "verify", "synthesize_tools", "architect", "build", "validate",
         }
         assert set(step_configs.keys()) == expected_steps
 
@@ -173,7 +176,7 @@ class TestFullGenesisPipelineThroughBootEngine:
         result = await engine.execute_dag(workflow["steps"], step_configs)
 
         assert result["status"] == "completed", f"Pipeline failed: {result.get('error', result.get('failed_step', 'unknown'))}"
-        assert len(result["step_results"]) == 8
+        assert len(result["step_results"]) == 10
 
         # Collect scores
         scores = {}
@@ -187,8 +190,8 @@ class TestFullGenesisPipelineThroughBootEngine:
         print("\n" + "=" * 60)
         print("GENESIS BUILD PIPELINE — STEP RESULTS")
         print("=" * 60)
-        for step_name in ["scan", "map", "discover_tools", "engineer_context",
-                          "synthesize_tools", "architect", "build", "validate"]:
+        for step_name in ["scan", "map", "resolve", "discover_tools", "engineer_context",
+                          "verify", "synthesize_tools", "architect", "build", "validate"]:
             sr = result["step_results"][step_name]
             status = sr.get("status", "unknown")
             val = sr.get("_validation", {})

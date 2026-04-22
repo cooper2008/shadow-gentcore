@@ -65,55 +65,109 @@ domain repos             acme-backend, shop-platform, your-domain, ...
 
 ## Genesis Pipeline Detail
 
-Genesis is a 7-step DAG that auto-generates domain agents from your source code.
+Genesis is a **10-step DAG** that auto-generates domain agents from your source
+code. The pipeline was expanded from 7 to 10 steps by the **Genesis Complexity
+Upgrade**, which added conflict resolution (Gaps 1 & 2), grounding verification
+(Gap 4), and tool synthesis — all without any new required config keys. The
+upgrade also introduced two optional companion workflows: `genesis_org_plan`
+for multi-domain pre-planning and `workflows/maintenance/house_style_sync`
+for cross-domain style arbitration.
 
 ```
 Step 1: SCAN (SourceScannerAgent)
   Input:  your src/, tests/, docs/, pyproject.toml
-  Output: tech_stack, dependencies, patterns, conventions
-  Mode:   react (reads files iteratively)
+  Output: tech_stack, dependencies, patterns, conventions (w/ evidence trails)
+  Mode:   react, up to 25 steps (bumped from 15 for deeper learning)
   Gate:   retry x2
 
 Step 2: MAP (KnowledgeMapperAgent)
   Input:  scan results
-  Output: knowledge_map (what standards, patterns, tools detected)
-  Mode:   chain_of_thought (single pass reasoning)
-  Gate:   retry x1
+  Output: knowledge_map + coverage score (per category + overall)
+  Mode:   chain_of_thought
+  Gate:   coverage.overall >= 40 — retry x1
 
-Step 3a: DISCOVER TOOLS (ToolDiscoveryAgent) ─┐
-  Input:  knowledge_map                        ├─ PARALLEL
-  Output: tool_packs, mcp_servers              │
+Step 3: RESOLVE (ConflictResolverAgent)                          [NEW]
+  Input:  knowledge_map + raw scan inventory
+  Output: resolved_knowledge_map (source_attribution on each rule)
+          contested_items[] (where ≥2 sources disagreed)
+          resolution_summary (which tiebreakers fired)
+  Mode:   react, 10 steps
+  Gate:   resolution_summary emitted — on_fail: degrade
+
+Step 4a: DISCOVER TOOLS (ToolDiscoveryAgent) ─┐
+  Input:  resolved_knowledge_map               ├─ PARALLEL
+  Output: tool_packs, mcp_servers, gaps        │
   Gate:   degrade (continue even if fails)     │
                                                │
-Step 3b: ENGINEER CONTEXT (ContextEngineerAgent)┘
-  Input:  knowledge_map + scan results
+Step 4b: ENGINEER CONTEXT (ContextEngineerAgent)┘
+  Input:  resolved_knowledge_map + scan
   Output: standards.md, architecture.md, glossary.md
   Mode:   plan_execute
   Gate:   retry x2
 
-Step 4: ARCHITECT (AgentArchitectAgent)
-  Input:  knowledge_map + tools + context
-  Output: agent_roster, workflow_design, tool_assignments
-  Mode:   plan_execute
-  Gate:   retry x1
+Step 5: VERIFY (ContextVerifierAgent)                            [NEW]
+  Input:  freshly generated standards.md / reference chunks
+  Output: grounding_score (0..1), unsupported_claims[]
+  Tools:  file_read only (cap 10 reads, ~3k tokens)
+  Mode:   single-turn
+  Gate:   grounding_score >= 0.7 — on_fail: degrade
+  Feedback: verify -> engineer_context (up to 2 loops) when under-grounded
 
-Step 5: BUILD (AgentBuilderAgent)
+Step 6: SYNTHESIZE TOOLS (ToolSynthesizerAgent)
+  Input:  gaps from discover_tools + resolved_knowledge_map
+  Output: synthesized_packs[] or mcp_wrappers[], security_scan
+  Gate:   security_scan.passed — on_fail: degrade
+
+Step 7: ARCHITECT (AgentArchitectAgent v2)
+  Input:  map + tools + synthesized tools + context + verify
+  Output: agent_roster, workflow_design, design_quality
+  Gate:   agent_count >= 2 AND dag_valid — retry x1 (Gap 5)
+
+Step 8: BUILD (AgentBuilderAgent)
   Input:  architect design + context + tools
   Output: all domain files written to disk
-  Mode:   plan_execute (up to 20 react steps)
-  Gate:   retry x2
+  Gate:   files_written >= 3 — retry x2 (Gap 5)
   Feedback: validate -> build (up to 3 iterations)
 
-Step 6: VALIDATE (QualityGateAgent)
+Step 9: VALIDATE (QualityGateAgent)
   Input:  built domain
   Output: validation_passed, issues, targeted_feedback
-  Mode:   react (up to 25 steps)
-  Gate:   retry x2, fallback to build
+  Gate:   validation_passed — retry x2, fallback to build (Gap 5)
+          (grounding is enforced upstream at verify_gate — not re-checked
+          here, so a grounding regression loops back to engineer_context
+          instead of retrying validate)
   Feedback: validate -> build (if failed)
-            validate -> context (if gaps)
+            validate -> context (if gaps, incl. cross-domain divergences)
 
 Budget: 500K tokens, $25 max, 1 hour timeout
 ```
+
+### Companion Workflows
+
+Both are additive: `genesis_build` still works unchanged for single-domain runs
+and nothing about `config/workspace.yaml` changes.
+
+- **`workflows/genesis/genesis_org_plan.yaml`** — single-step pre-planner.
+  Invokes `DomainPlannerAgent` on a "mixed org" team config (many repos +
+  many docs) and emits `domain_plan[]`. Caller then runs `genesis_build`
+  once per entry. Low-confidence splits surface as `decision: ask-human`
+  rather than requiring the user to hand-author priorities or boundaries.
+
+- **`workflows/maintenance/house_style_sync.yaml`** — runs `HouseStyleAgent`
+  across every domain registered by `DomainRegistry` and writes a unified
+  `agent-tools/org_standards.md` plus per-domain divergence reports. The
+  divergences feed into the existing `validate -> context` feedback loop
+  on the next `genesis_build` run, so cross-domain drift gets cleaned up
+  in place without manual intervention.
+
+### When to Use Which Genesis Workflow
+
+| Situation | Workflow |
+|-----------|----------|
+| Single coherent target + ≤ few reference repos | `genesis_build` |
+| One team pointed at many repos across stacks | `genesis_org_plan` first, then `genesis_build` per emitted domain |
+| Multiple domains already exist and have drifted | `workflows/maintenance/house_style_sync` |
+| Iterative improvement of a domain post-build | `genesis_evolve` (unchanged) |
 
 ---
 
@@ -134,7 +188,7 @@ agents/{AgentName}/v1/
 
 | Layer | Agents | Purpose |
 |-------|--------|---------|
-| **Genesis (L0)** | 8 agents | Build domain agents from source code |
+| **Genesis (L0)** | 12 agents | Build domain agents from source code (incl. DomainPlanner, ConflictResolver, ContextVerifier, HouseStyle) |
 | **Shared (L1)** | 20 agents | Reusable stage agents for domain workflows |
 | **Factory** | 4 agents | Domain scaffolding utilities |
 | **Orchestrator** | 2 agents | Cross-domain coordination |

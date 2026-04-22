@@ -21,18 +21,33 @@ steps:
     description: "Classify discovered knowledge into framework categories"
     gate:
       name: map_gate
-      # Map is a transformation step — if scan had real content (enforced
-      # by scan_gate), map's shape will reflect that. Keep this loose so
-      # smoke/mock providers with skeletal shapes still pass; real quality
-      # is enforced at scan (upstream) and architect (downstream).
-      condition: "status == success"
+      # Coverage-aware gate. When the classifier honestly scored coverage
+      # below 40/100 there isn't enough signal to generate a useful domain
+      # — we fail here rather than let the architect assemble a thin
+      # roster. Smoke/mock providers should score 0 or >40 depending on
+      # fixture content; the genesis_test_provider fixture returns 85.
+      condition: "status == success and output.coverage.overall >= 40"
       on_fail: retry
       max_retries: 1
+
+  # Layer 2b: Conflict resolution (NEW — Gaps 1, 2)
+  - name: resolve
+    agent: _genesis/ConflictResolverAgent/v1
+    depends_on: [map]
+    description: "Arbitrate reference-vs-reference conflicts and group versioned docs"
+    gate:
+      name: resolve_gate
+      # Pass-through is legitimate when no conflicts exist — the agent
+      # emits contested_items: [] and resolved_knowledge_map mirrors the
+      # input. Enforce only that resolution_summary was produced so we
+      # know the step actually ran.
+      condition: "status == success and output.resolution_summary is not empty"
+      on_fail: degrade
 
   # Layer 3: Preparation (PARALLEL)
   - name: discover_tools
     agent: _genesis/ToolDiscoveryAgent/v1
-    depends_on: [map]
+    depends_on: [resolve]
     description: "Research needed tools and MCP servers"
     gate:
       name: tools_gate
@@ -41,7 +56,7 @@ steps:
 
   - name: engineer_context
     agent: _genesis/ContextEngineerAgent/v1
-    depends_on: [map]
+    depends_on: [resolve]
     description: "Generate quality context documents"
     gate:
       name: context_gate
@@ -51,6 +66,23 @@ steps:
       condition: "status == success"
       on_fail: retry
       max_retries: 2
+
+  # Layer 3a: Grounding verification (NEW — Gap 4)
+  # Spot-checks a sample of claims in the freshly generated standards.md /
+  # reference_chunks against the source files they cite. Has its own
+  # file_read budget (cap 10). Failing the gate triggers the
+  # verify_to_context feedback loop with unsupported_claims[] as payload.
+  - name: verify
+    agent: _genesis/ContextVerifierAgent/v1
+    depends_on: [engineer_context]
+    description: "Spot-check grounding of generated standards/reference chunks"
+    gate:
+      name: verify_gate
+      # 0.7 is the plan's threshold. Smoke/mock runs with a single
+      # advisory-only doc should sample 1 claim and score 1.0. Real
+      # runs will start lower and tighten as ContextEngineer loops.
+      condition: "status == success and output.grounding_score >= 0.7"
+      on_fail: degrade
 
   # Layer 3b: Close tool gaps surfaced by discover_tools. Wraps existing
   # public MCP servers when they match, or synthesizes new tool pack YAMLs
@@ -72,13 +104,15 @@ steps:
   # Layer 4: Design
   - name: architect
     agent: _genesis/AgentArchitectAgent/v2
-    depends_on: [map, discover_tools, synthesize_tools, engineer_context]
+    depends_on: [map, discover_tools, synthesize_tools, engineer_context, verify]
     description: "Design agent roster, workflow DAG, tool assignments"
     gate:
       name: architect_gate
-      # Transformation step. End-of-pipeline quality is enforced at build_gate
-      # where real file writes happen. Keep loose so smoke/mock providers pass.
-      condition: "status == success"
+      # Coverage-aware, minimum-roster gate (Gap 5). Requires at least
+      # 2 roster entries AND a valid DAG. Both fields are populated by
+      # AgentArchitectAgent.v2's required `design_quality` block. Smoke
+      # / mock providers that honestly emit ≥2 designs still pass.
+      condition: "status == success and output.design_quality.agent_count >= 2 and output.design_quality.dag_valid == true"
       on_fail: retry
       max_retries: 1
 
@@ -89,10 +123,13 @@ steps:
     description: "Create all domain files"
     gate:
       name: build_gate
-      # Build produces actual files via emit-then-write hook; gate just
-      # verifies the agent run completed. Real content minima are checked
-      # at the final validate step (QualityGateAgent).
-      condition: "status == success"
+      # Real file-write minimum enforced here (Gap 5). Builder's hooks.py
+      # populates output.build_quality.files_written after each emit-then
+      # -write pass. Three is the floor — a smoke run that writes one
+      # agent + a workflow still falls below this, which is intended:
+      # the smoke tier is for infrastructure verification, not real
+      # domain generation.
+      condition: "status == success and output.build_quality.files_written >= 3"
       on_fail: retry
       max_retries: 2
 
@@ -103,12 +140,41 @@ steps:
     description: "Comprehensive validation + dry-run"
     gate:
       name: validate_gate
-      condition: "status == success"
+      # Final quality gate (Gap 5). Verifies QualityGateAgent gave an
+      # explicit pass. The grounding-score half of the plan is already
+      # enforced upstream by verify_gate — checking it again here would
+      # be redundant and would bury grounding regressions under a
+      # validate retry loop. If ContextVerifier flagged under-grounded
+      # claims, verify_to_context already looped back to
+      # engineer_context before we ever got here.
+      condition: "status == success and output.validation_passed == true"
       on_fail: retry
       max_retries: 2
       fallback_step: build
 
 feedback_loops:
+  - name: verify_to_context
+    from_step: verify
+    to_step: engineer_context
+    # Triggers when ContextVerifierAgent judged the generated
+    # standards/reference chunks to be under-grounded. The
+    # unsupported_claims[] array ships back to ContextEngineer so it
+    # can drop / re-cite the specific bad lines rather than regenerate
+    # the whole document.
+    #
+    # NOTE — manifest_loader wraps this with `not`, so the yaml
+    # `condition:` is the SUCCESS case (loop fires when it is False).
+    # Mirrors the existing validate_to_build / validate_to_context
+    # convention below.
+    condition: "grounding_score >= 0.7"
+    max_iterations: 2
+    feedback_format: |
+      Grounding check failed (score={grounding_score}).
+      Unsupported claims to fix:
+      {unsupported_claims}
+      Either re-cite these claims with a real content_ref, or drop them.
+      Keep the rest of standards.md intact.
+
   - name: validate_to_build
     from_step: validate
     to_step: build

@@ -1,0 +1,37 @@
+threshold: 0.80
+
+criteria:
+  - name: resolved_map_present
+    type: automated
+    weight: 2.0
+    check: "resolved_knowledge_map is not None"
+
+  - name: summary_fields_populated
+    type: automated
+    weight: 1.5
+    check: "resolution_summary is not None and 'total_items' in resolution_summary and 'contested_count' in resolution_summary"
+
+  - name: contested_items_shape
+    type: automated
+    weight: 1.5
+    check: "len([c for c in contested_items if 'winner' in c and 'tiebreaker_applied' in c and 'confidence' in c]) == len(contested_items)"
+
+  - name: tiebreaker_discipline
+    type: llm_judge
+    weight: 2.0
+    prompt: >-
+      Did the agent apply the tiebreaker ladder (frontmatter_supersedes →
+      filename_version → mtime_newer → repo_role → git_recency →
+      fallback_keep_all) in strict order without skipping? Did it set
+      `needs_human: true` only when the fallback rule fired, and never
+      demand a workspace.yaml change? Are confidence values consistent
+      with the tiebreaker chosen (frontmatter ≈ 0.95, fallback < 0.6)?
+
+  - name: no_config_demands
+    type: llm_judge
+    weight: 1.0
+    prompt: >-
+      Check that none of the notes in resolution_summary ask the user
+      to edit workspace.yaml, to add priority fields, or to hand-author
+      precedence metadata. The only acceptable human-ask is "resolve
+      this specific contested item" — configuration must stay simple.

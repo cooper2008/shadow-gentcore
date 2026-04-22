@@ -9,7 +9,7 @@ system_prompt_ref: system_prompt.md
 
 execution_mode:
   primary: react
-  max_react_steps: 15
+  max_react_steps: 25
 
 tools:
   - name: file_read
@@ -74,7 +74,29 @@ output_schema:
       properties:
         standards_extracted:
           type: array
-          items: {type: object, properties: {name: {type: string}, description: {type: string}, source: {type: string}, content_ref: {type: string}}}
+          items:
+            type: object
+            required: [name, description, content_ref, evidence]
+            properties:
+              name: {type: string}
+              description: {type: string}
+              source: {type: string}
+              content_ref: {type: string}
+              evidence:
+                type: array
+                minItems: 1
+                description: "Verbatim proof that this standard exists in the cited source."
+                items:
+                  type: object
+                  required: [file, line_range, quote]
+                  properties:
+                    file: {type: string, description: "Absolute path file_read'd by the scanner."}
+                    line_range:
+                      type: array
+                      minItems: 2
+                      maxItems: 2
+                      items: {type: integer}
+                    quote: {type: string, maxLength: 200}
         patterns_found:
           type: array
           items: {type: object, properties: {name: {type: string}, description: {type: string}, file_examples: {type: array}}}

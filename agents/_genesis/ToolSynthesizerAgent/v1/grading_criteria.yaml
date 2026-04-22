@@ -3,6 +3,8 @@
 # Applied by OutputValidator after the gate passes. Low scores don't block
 # the workflow but surface in the run record for EvolutionAgent to learn from.
 
+threshold: 0.75
+
 criteria:
   - name: decisions_grounded
     description: >-

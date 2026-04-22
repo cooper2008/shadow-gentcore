@@ -1,0 +1,111 @@
+id: _genesis/HouseStyleAgent/v1
+domain: _genesis
+pack: core
+category: reasoning
+version: "1.0.0"
+description: >-
+  Cross-domain style arbiter. Reads every registered domain's
+  `context/standards.md`, detects org-wide conventions that are
+  consistent vs divergent, and writes a single shared
+  `org_standards.md` plus a diff report per divergent domain.
+
+  Runs on-demand from `workflows/maintenance/house_style_sync.yaml`,
+  never inside `genesis_build`. Uses the existing DomainRegistry in
+  `harness/core/cross_domain.py` — no new config required.
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: react
+  max_react_steps: 25
+
+tools:
+  - name: list_dir
+    description: "Enumerate domain directories."
+    pack: "toolpack://core/search"
+  - name: file_read
+    description: "Read each domain's standards.md (and domain.yaml for metadata)."
+    pack: "toolpack://core/filesystem"
+  - name: file_write
+    description: "Write the merged org_standards.md and per-domain divergence reports."
+    pack: "toolpack://core/filesystem"
+
+constraints:
+  max_files_to_read: 50
+  read_only: false
+
+permissions:
+  file_edit: allow
+  file_create: allow
+  shell_command: deny
+  network_access: deny
+
+input_schema:
+  type: object
+  required: [domain_registry]
+  properties:
+    domain_registry:
+      type: object
+      description: >-
+        Snapshot of the DomainRegistry (list of {name, path, manifest}).
+        Harness injects this — user never touches it.
+      properties:
+        domains:
+          type: array
+          items:
+            type: object
+            required: [name, path]
+            properties:
+              name: {type: string}
+              path: {type: string}
+              manifest: {type: object}
+    output_path:
+      type: string
+      default: "agent-tools/org_standards.md"
+      description: "Where to write the merged org-wide standards document."
+    divergence_report_dir:
+      type: string
+      description: "Optional override for per-domain divergence report directory. Defaults to each domain's path + '/context/divergence_from_org.md'."
+
+output_schema:
+  type: object
+  required: [org_standards_path, divergences, sync_summary]
+  properties:
+    org_standards_path:
+      type: string
+      description: "Path to the written org_standards.md."
+    divergences:
+      type: array
+      description: "Per-domain divergence report. One entry per domain that differs from the org baseline."
+      items:
+        type: object
+        required: [domain, report_path, divergent_rules]
+        properties:
+          domain: {type: string}
+          report_path: {type: string}
+          divergent_rules:
+            type: array
+            items:
+              type: object
+              required: [rule, domain_version, org_version]
+              properties:
+                rule: {type: string}
+                domain_version: {type: string}
+                org_version: {type: string}
+                severity:
+                  type: string
+                  enum: [info, warn, block]
+    sync_summary:
+      type: object
+      required: [domains_scanned, shared_rules, divergent_rules_total]
+      properties:
+        domains_scanned: {type: integer}
+        shared_rules: {type: integer}
+        divergent_rules_total: {type: integer}
+        notes: {type: array, items: {type: string}}
+
+grading_criteria_ref: grading_criteria.yaml
+
+metadata:
+  author: platform-team
+  tags: [genesis, maintenance, cross-domain, house-style]

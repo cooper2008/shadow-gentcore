@@ -1,0 +1,110 @@
+id: _genesis/ContextVerifierAgent/v1
+domain: _genesis
+pack: core
+category: security-analysis
+version: "1.0.0"
+description: >-
+  Spot-checks that claims in the generated standards.md (and optionally
+  reference chunks) are actually grounded in the cited source files.
+  Runs after ContextEngineerAgent, before AgentArchitectAgent. Emits a
+  grounding_score (0..1) and an explicit list of unsupported claims so
+  the feedback loop can send ContextEngineer back with the exact items
+  to fix.
+
+system_prompt_ref: system_prompt.md
+
+execution_mode:
+  primary: react
+  max_react_steps: 12
+
+tools:
+  - name: file_read
+    description: "Re-read cited source files to verify a claim against quoted text"
+    pack: "toolpack://core/filesystem"
+
+constraints:
+  no_file_modification: true
+  read_only: true
+
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+
+input_schema:
+  type: object
+  required: [documents]
+  properties:
+    documents:
+      type: object
+      description: >-
+        Output of ContextEngineerAgent — must include `standards_md`
+        and may include `reference_chunks[]` / `reference_docs[]`.
+    scan_result:
+      type: object
+      description: >-
+        Original SourceScanner inventory. Used to resolve `content_ref`
+        paths to absolute files on disk.
+    resolved_knowledge_map:
+      type: object
+      description: "Optional — helpful for cross-checking attribution."
+    knowledge_map:
+      type: object
+      description: "Fallback when resolved_knowledge_map is absent."
+    domain_context_dir:
+      type: string
+      description: "Root directory for relative content_ref paths (optional)."
+
+output_schema:
+  type: object
+  required: [grounding_score, unsupported_claims, verified_claims, verification_summary]
+  properties:
+    grounding_score:
+      type: number
+      minimum: 0.0
+      maximum: 1.0
+      description: >-
+        Fraction of sampled claims that are fully supported by the cited
+        source (verified_claims / sampled_claims). Used by verify_gate.
+    verified_claims:
+      type: array
+      description: "Claims that the cited source actually supports."
+      items:
+        type: object
+        required: [claim, source_file, confidence]
+        properties:
+          claim: {type: string}
+          source_file: {type: string}
+          quote: {type: string, description: "Short verbatim snippet from the source that supports the claim."}
+          confidence: {type: number, minimum: 0, maximum: 1}
+    unsupported_claims:
+      type: array
+      description: >-
+        Claims the source does not support, or whose cited file could
+        not be read. This list is what the feedback loop hands back to
+        ContextEngineer.
+      items:
+        type: object
+        required: [claim, source_file, reason]
+        properties:
+          claim: {type: string}
+          source_file: {type: string}
+          reason:
+            type: string
+            enum: [not_found, contradicted, unreadable, no_citation]
+          suggested_fix: {type: string}
+    verification_summary:
+      type: object
+      required: [sampled_claims, reads_used, total_claims_seen]
+      properties:
+        sampled_claims: {type: integer}
+        reads_used: {type: integer}
+        total_claims_seen: {type: integer}
+        notes: {type: array, items: {type: string}}
+
+grading_criteria_ref: grading_criteria.yaml
+
+metadata:
+  author: platform-team
+  tags: [genesis, verification, grounding, meta-agent]

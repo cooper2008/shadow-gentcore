@@ -14,6 +14,7 @@ import yaml
 
 from harness.core.composition_engine import CompositionEngine
 from harness.core.agent_runner import AgentRunner
+from harness.core.manifest_loader import ManifestLoader
 from harness.core.output_validator import OutputValidator
 from harness.tests.genesis_test_provider import GenesisTestProvider, GENESIS_OUTPUTS
 
@@ -39,10 +40,32 @@ def make_engine() -> tuple[CompositionEngine, GenesisTestProvider]:
 
 
 async def run_genesis_pipeline(workflow_path: Path) -> dict:
-    """Run a genesis workflow and return the full result."""
-    engine, provider = make_engine()
-    workflow = load_workflow(workflow_path)
-    result = await engine.execute_dag(workflow["steps"])
+    """Run a genesis workflow end-to-end using boot_engine.
+
+    boot_engine loads each step's manifest/system_prompt from disk and builds
+    a step_configs dict that CompositionEngine needs in order to route calls
+    through AgentRunner + GenesisTestProvider. Without this, execute_dag falls
+    back to the stub path and every gate that inspects `output.<field>` fails.
+    """
+    loader = ManifestLoader()
+    provider = GenesisTestProvider()
+    engine, workflow, step_configs = loader.boot_engine(
+        workflow_path,
+        domain_root=PROJECT_ROOT,
+        provider=provider,
+        task_input={
+            "team_config": {
+                "reference": [{"path": str(PROJECT_ROOT / "sample_project" / "backend")}],
+                "target": [{"path": str(PROJECT_ROOT / "sample_project" / "backend")}],
+                "docs": [{"path": str(PROJECT_ROOT / "sample_project" / "docs"), "type": "documents"}],
+                "industry": "software",
+                "trusted": True,
+            },
+            "industry": "software",
+            "domain_name": "workflow_smoke",
+        },
+    )
+    result = await engine.execute_dag(workflow["steps"], step_configs)
     result["_provider"] = provider
     return result
 
@@ -61,18 +84,19 @@ class TestGenesisWorkflowStructure:
     def test_evolve_workflow_exists(self) -> None:
         assert GENESIS_EVOLVE_WORKFLOW.exists()
 
-    def test_build_workflow_has_8_steps(self) -> None:
-        # Grew from 7→8 when synthesize_tools (Phase A) was added between
-        # discover_tools and architect.
+    def test_build_workflow_has_10_steps(self) -> None:
+        # Grew 7→8 when synthesize_tools (Phase A) was inserted, then
+        # 8→10 when resolve (ConflictResolver) and verify (ContextVerifier)
+        # were added by the complexity upgrade.
         wf = load_workflow(GENESIS_BUILD_WORKFLOW)
-        assert len(wf["steps"]) == 8
+        assert len(wf["steps"]) == 10
 
     def test_build_workflow_step_names(self) -> None:
         wf = load_workflow(GENESIS_BUILD_WORKFLOW)
         names = [s["name"] for s in wf["steps"]]
         assert names == [
-            "scan", "map", "discover_tools", "engineer_context",
-            "synthesize_tools", "architect", "build", "validate",
+            "scan", "map", "resolve", "discover_tools", "engineer_context",
+            "verify", "synthesize_tools", "architect", "build", "validate",
         ]
 
     def test_build_workflow_all_steps_have_agents(self) -> None:
@@ -94,16 +118,26 @@ class TestGenesisWorkflowStructure:
         assert "scan" in layers[0]
         # Layer 1: map (depends on scan)
         assert "map" in layers[1]
-        # Layer 2: discover_tools + engineer_context (PARALLEL, both depend on map)
-        assert set(layers[2]) == {"discover_tools", "engineer_context"}
-        # Layer 3: synthesize_tools (depends on discover_tools + map)
-        assert "synthesize_tools" in layers[3]
-        # Layer 4: architect (depends on map, discover_tools, synthesize_tools, engineer_context)
-        assert "architect" in layers[4]
-        # Layer 5: build
-        assert "build" in layers[5]
-        # Layer 6: validate
-        assert "validate" in layers[6]
+        # Layer 2: resolve (depends on map)
+        assert "resolve" in layers[2]
+        # Layer 3: discover_tools + engineer_context (PARALLEL, both depend on resolve)
+        assert set(layers[3]) == {"discover_tools", "engineer_context"}
+        # verify depends on engineer_context; synthesize_tools depends on discover_tools+map.
+        # Both sit downstream of layer 3.
+        def layer_of(step_name: str) -> int:
+            for i, lyr in enumerate(layers):
+                if step_name in lyr:
+                    return i
+            raise AssertionError(f"step not in any layer: {step_name}")
+
+        assert layer_of("verify") > layer_of("engineer_context")
+        assert layer_of("synthesize_tools") > layer_of("discover_tools")
+        # architect waits for both verify and synthesize_tools
+        assert layer_of("architect") > layer_of("verify")
+        assert layer_of("architect") > layer_of("synthesize_tools")
+        # build then validate
+        assert layer_of("build") > layer_of("architect")
+        assert layer_of("validate") > layer_of("build")
 
     def test_build_workflow_has_feedback_loops(self) -> None:
         wf = load_workflow(GENESIS_BUILD_WORKFLOW)
@@ -132,17 +166,26 @@ class TestGenesisWorkflowStructure:
 # ── Genesis Agent Manifest Tests ─────────────────────────────────────────
 
 class TestGenesisAgentManifests:
-    """Validate all 8 genesis agent manifests are well-formed."""
+    """Validate every genesis agent manifest is well-formed.
+
+    List expanded by the complexity upgrade to include ConflictResolver,
+    ContextVerifier, ToolSynthesizer, DomainPlanner, and HouseStyle.
+    """
 
     GENESIS_AGENTS = [
         "SourceScannerAgent",
         "KnowledgeMapperAgent",
-        "ToolDiscoveryAgent",
+        "ConflictResolverAgent",
         "ContextEngineerAgent",
+        "ContextVerifierAgent",
+        "ToolDiscoveryAgent",
+        "ToolSynthesizerAgent",
         "AgentArchitectAgent",
         "AgentBuilderAgent",
         "QualityGateAgent",
         "EvolutionAgent",
+        "DomainPlannerAgent",
+        "HouseStyleAgent",
     ]
 
     @pytest.mark.parametrize("agent_name", GENESIS_AGENTS)
@@ -202,8 +245,8 @@ class TestGenesisPipelineExecution:
     async def test_all_steps_executed(self) -> None:
         result = await run_genesis_pipeline(GENESIS_BUILD_WORKFLOW)
         expected = {
-            "scan", "map", "discover_tools", "engineer_context",
-            "synthesize_tools", "architect", "build", "validate",
+            "scan", "map", "resolve", "discover_tools", "engineer_context",
+            "verify", "synthesize_tools", "architect", "build", "validate",
         }
         assert set(result["step_results"].keys()) == expected
 
@@ -215,14 +258,18 @@ class TestGenesisPipelineExecution:
         started = [e["step"] for e in log if e.get("event") == "step_started"]
         # scan must be before map
         assert started.index("scan") < started.index("map")
-        # map must be before discover_tools and engineer_context
-        assert started.index("map") < started.index("discover_tools")
-        assert started.index("map") < started.index("engineer_context")
+        # map must be before resolve (new conflict-resolver layer)
+        assert started.index("map") < started.index("resolve")
+        # resolve must be before discover_tools and engineer_context
+        assert started.index("resolve") < started.index("discover_tools")
+        assert started.index("resolve") < started.index("engineer_context")
+        # verify runs after engineer_context
+        assert started.index("engineer_context") < started.index("verify")
         # synthesize_tools runs after discover_tools (its primary input)
         assert started.index("discover_tools") < started.index("synthesize_tools")
-        # all layer-3 steps complete before architect
+        # both verify and synthesize_tools complete before architect
         assert started.index("synthesize_tools") < started.index("architect")
-        assert started.index("engineer_context") < started.index("architect")
+        assert started.index("verify") < started.index("architect")
         # architect before build
         assert started.index("architect") < started.index("build")
         # build before validate
@@ -239,7 +286,7 @@ class TestGenesisPipelineExecution:
         # The execution log should show dep injection
         log = result["execution_log"]
         step_started_events = [e for e in log if e.get("event") == "step_started"]
-        assert len(step_started_events) == 8
+        assert len(step_started_events) == 10
 
     @pytest.mark.asyncio
     async def test_scan_workflow_completes(self) -> None:

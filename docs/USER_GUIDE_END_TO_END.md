@@ -82,7 +82,11 @@ teams:
 
 ## 2. Run genesis → real domain agents from your codebase
 
-Genesis is a 7-step pipeline that **reads your repo, docs, and capabilities**, then writes purpose-built agents into your domain repo.
+Genesis is a **10-step pipeline** that **reads your repo, docs, and capabilities**, then writes purpose-built agents into your domain repo. The 10-step
+shape is the result of the **Genesis Complexity Upgrade** — no new required
+config keys were introduced; the pipeline simply got smarter about handling
+messy real-world inputs (many reference repos, versioned docs, ambiguous
+ownership).
 
 ### Dry-run first (zero API cost)
 
@@ -95,16 +99,36 @@ cd /path/to/shadow-gentcore
 The pipeline runs:
 
 ```
-scan → map → discover_tools → engineer_context → architect → build → validate
+scan → map → resolve → (discover_tools ∥ engineer_context) → verify
+     → synthesize_tools → architect → build → validate
 ```
 
-- **SourceScannerAgent** — walks `reference/` + `target/` + `docs/`, builds an inventory.
-- **KnowledgeMapperAgent** — classifies findings (patterns, stacks, conventions).
+- **SourceScannerAgent** — walks `reference/` + `target/` + `docs/`, builds an inventory. Every extracted standard now carries an `evidence` trail (file, line range, quote) — templated / made-up rules fail the schema.
+- **KnowledgeMapperAgent** — classifies findings and emits a `coverage` score per category plus overall. The `map_gate` blocks the pipeline when coverage is too thin.
+- **ConflictResolverAgent** (NEW) — when multiple reference repos disagree or docs have version suffixes (`v1`, `-old`, `-deprecated`, …), this step arbitrates using a fixed 6-rung tiebreaker ladder (frontmatter supersedes → filename version → mtime → repo role → git recency → fallback: keep both, flag contested). Emits `resolved_knowledge_map` with `source_attribution` on every rule and a `contested_items[]` list. **Zero new config required** — the agent infers priorities from the repos and docs themselves.
 - **ToolDiscoveryAgent** — picks tool packs matching your stack (FastAPI → `toolpack://core/fastapi`).
-- **ContextEngineerAgent** — generates `context/standards.md` and `context/architecture.md`.
-- **AgentArchitectAgent/v2** (catalog-driven, default since this release) — designs the agent roster + workflow graph with proper **gates + feedback loops**.
-- **AgentBuilderAgent** — writes every file: `agents/<Name>/v1/{agent_manifest.yaml, system_prompt.md, grading_criteria.yaml}` and `workflows/*.yaml`.
-- **QualityGateAgent** — validates the generated artifacts.
+- **ContextEngineerAgent** — generates `context/standards.md` and `context/architecture.md` from the resolved knowledge map.
+- **ContextVerifierAgent** (NEW) — re-reads a sample of cited sources with `file_read` and scores how well the generated docs are grounded in real files (`grounding_score`). Low grounding loops back to `ContextEngineer` with the specific unsupported claims rather than regenerating the whole document.
+- **ToolSynthesizerAgent** — closes tool gaps by wrapping public MCP servers or synthesising new tool packs, subject to a static security scan.
+- **AgentArchitectAgent/v2** (catalog-driven, default since this release) — designs the agent roster + workflow graph with proper **gates + feedback loops**. Coverage-aware gate now requires ≥ 2 roster entries and a valid DAG.
+- **AgentBuilderAgent** — writes every file: `agents/<Name>/v1/{agent_manifest.yaml, system_prompt.md, grading_criteria.yaml}` and `workflows/*.yaml`. Gate requires ≥ 3 files actually written (not just planned).
+- **QualityGateAgent** — validates the generated artifacts. `validation_passed` must be `true`.
+
+### When to use which Genesis workflow
+
+| Situation | Command |
+|-----------|---------|
+| Single coherent target + ≤ few reference repos | `./ai genesis build --team <name>` (runs `genesis_build.yaml`) |
+| One team pointed at many repos across different stacks | `./ai genesis plan --team <name>` first (runs `genesis_org_plan.yaml`) — emits `domain_plan[]`, then run `genesis build` once per suggested domain |
+| Multiple domains already built and have drifted on style | `./ai genesis sync-house-style` (runs `workflows/maintenance/house_style_sync.yaml`) |
+| Iterative improvement of a domain post-build | `./ai genesis evolve --team <name>` (runs `genesis_evolve.yaml`, unchanged) |
+
+**Config stays the same** — the existing `teams.<name>` block with
+`reference / target / docs / industry / focus / output` covers every scenario.
+You never hand-author priority numbers, version flags, or domain boundaries.
+If `ConflictResolver` or `DomainPlanner` cannot decide on its own, it emits
+`decision: ask-human` and lists the ambiguous items for you to answer as a
+question — you never edit yaml to resolve a conflict.
 
 ### Real build (needs API key)
 

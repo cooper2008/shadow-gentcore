@@ -130,6 +130,112 @@ GENESIS_OUTPUTS: dict[str, dict[str, Any]] = {
         ],
     },
 
+    "ConflictResolverAgent": {
+        "resolved_knowledge_map": {
+            "standards_sources": [
+                {"title": "pyproject.toml", "content_ref": "file://pyproject.toml", "source_attribution": {"source": "repo-a", "tiebreaker_applied": "repo_role", "confidence": 0.85}},
+                {"title": "ruff.toml", "content_ref": "file://ruff.toml", "source_attribution": {"source": "repo-a", "tiebreaker_applied": "mtime_newer", "confidence": 0.80}},
+            ],
+            "reference_topics": [
+                {"topic": "FastAPI Application Structure", "sources": ["app/main.py"], "source_attribution": {"source": "repo-a", "tiebreaker_applied": "frontmatter_supersedes", "confidence": 0.95}},
+            ],
+            "workflow_processes": [
+                {"name": "Feature Development", "stages": ["code", "lint", "test", "review", "deploy"]},
+            ],
+            "compliance_rules": [
+                {"name": "Code Quality", "source": "ruff.toml", "description": "Ruff linting rules enforced"},
+            ],
+            "output_templates": [],
+            "glossary_terms": [],
+            "roles": [],
+            "training_content": [],
+            "examples": [],
+            "unclassified": [],
+        },
+        "contested_items": [],
+        "resolution_summary": {
+            "total_items": 4,
+            "contested_count": 0,
+            "tiebreakers_used": {"frontmatter_supersedes": 1, "mtime_newer": 1, "repo_role": 2},
+            "needs_human": False,
+            "notes": [
+                "No hard conflicts detected. Resolution limited to tagging source_attribution on every surviving rule.",
+            ],
+        },
+    },
+
+    "ContextVerifierAgent": {
+        "grounding_score": 0.9,
+        "verified_claims": [
+            {
+                "claim": "Python 3.11+ is used",
+                "source_file": "/mock/backend_fastapi/pyproject.toml",
+                "quote": "python = \"^3.11\"",
+                "confidence": 0.95,
+            },
+            {
+                "claim": "Ruff enforces linting",
+                "source_file": "/mock/backend_fastapi/ruff.toml",
+                "quote": "select = [\"E\", \"F\", \"W\", \"I\"]",
+                "confidence": 0.9,
+            },
+        ],
+        "unsupported_claims": [],
+        "verification_summary": {
+            "sampled_claims": 2,
+            "reads_used": 2,
+            "total_claims_seen": 6,
+            "notes": ["Smoke fixture — sample size intentionally small."],
+        },
+    },
+
+    "ToolSynthesizerAgent": {
+        "synthesized_packs": [],
+        "mcp_wrappers": [],
+        "security_scan": {
+            "passed": True,
+            "findings": [],
+        },
+        "notes": ["No synthesis needed — all discovered tools matched existing public packs."],
+    },
+
+    "DomainPlannerAgent": {
+        "decision": "single-domain",
+        "domain_plan": [
+            {
+                "name": "backend-fastapi",
+                "sources": {
+                    "reference": [{"path": "../repo-a", "role": "reference"}],
+                    "target": [{"path": "../target-svc-1"}],
+                    "docs": [{"path": "../policies", "type": "documents"}],
+                },
+                "industry": "fintech",
+                "focus": ["fastapi", "postgres"],
+                "output": "../domain-backend-fastapi",
+                "rationale": "Single coherent Python/FastAPI stack with one owner cohort; docs only cite these repos.",
+                "confidence": 0.88,
+            },
+        ],
+        "ambiguous_items": [],
+        "planner_summary": {
+            "repos_seen": 2,
+            "docs_seen": 1,
+            "signals_used": ["tech_stack", "codeowners", "doc_reach"],
+            "notes": ["Fixture — single-domain passthrough."],
+        },
+    },
+
+    "HouseStyleAgent": {
+        "org_standards_path": "agent-tools/org_standards.md",
+        "divergences": [],
+        "sync_summary": {
+            "domains_scanned": 1,
+            "shared_rules": 4,
+            "divergent_rules_total": 0,
+            "notes": ["Only one domain registered — emitted org_standards.md as passthrough."],
+        },
+    },
+
     "ToolDiscoveryAgent": {
         "tools_discovered": [
             {"name": "pytest", "system": "pytest", "purpose": "Python test runner", "status": "available", "integration": "tool_pack"},
@@ -565,10 +671,22 @@ GENESIS_OUTPUTS: dict[str, dict[str, Any]] = {
 
 
 def _identify_agent(messages: list[dict[str, Any]]) -> str:
-    """Extract genesis agent name from system message."""
+    """Extract genesis agent name from system message.
+
+    Genesis system prompts start with ``# <AgentName>\n``. Match that first so
+    prompts that reference other agents by name (e.g. KnowledgeMapperAgent's
+    prompt mentions SourceScannerAgent) still resolve to the correct owner.
+    """
+    import re
     for msg in messages:
         if msg.get("role") == "system":
             content = str(msg.get("content", ""))
+            header_match = re.match(r"^#\s+(\w+)\b", content.lstrip())
+            if header_match and header_match.group(1) in GENESIS_OUTPUTS:
+                return header_match.group(1)
+            for agent_name in GENESIS_OUTPUTS:
+                if re.search(rf"You are\s+\*\*{re.escape(agent_name)}\*\*", content):
+                    return agent_name
             for agent_name in GENESIS_OUTPUTS:
                 if agent_name in content:
                     return agent_name

@@ -1,0 +1,53 @@
+threshold: 0.80
+
+criteria:
+  - name: grounding_score_present
+    type: automated
+    weight: 2.0
+    check: "grounding_score is not None and 0.0 <= grounding_score <= 1.0"
+
+  - name: verification_summary_populated
+    type: automated
+    weight: 1.5
+    check: "verification_summary is not None and 'sampled_claims' in verification_summary and 'reads_used' in verification_summary and 'total_claims_seen' in verification_summary"
+
+  - name: unsupported_claims_actionable
+    type: automated
+    weight: 1.5
+    check: "len([c for c in unsupported_claims if 'claim' in c and 'source_file' in c and 'reason' in c]) == len(unsupported_claims)"
+
+  - name: read_budget_respected
+    type: automated
+    weight: 1.0
+    check: "verification_summary.reads_used <= 10"
+
+  - name: score_math_consistent
+    type: llm_judge
+    weight: 1.5
+    prompt: >-
+      Is grounding_score == len(verified_claims) / max(1,
+      len(verified_claims) + len(unsupported_claims))? If not, was a
+      deliberate reason written into verification_summary.notes? The
+      score must be internally consistent with the two arrays — no
+      hand-waving, no rounding past two decimal places.
+
+  - name: claim_quality
+    type: llm_judge
+    weight: 2.0
+    prompt: >-
+      Did the agent sample *specific* claims (numbers, filenames,
+      function names, env vars) rather than generic prose like "code
+      should be readable"? Did it correctly skip the advisory
+      enrichment section when it had no real citation? For every
+      unsupported claim, is `reason` one of {not_found, contradicted,
+      unreadable, no_citation} and is `suggested_fix` concrete enough
+      that ContextEngineer could act on it without asking a follow-up?
+
+  - name: no_file_edits
+    type: llm_judge
+    weight: 1.0
+    prompt: >-
+      Confirm the agent did not attempt to modify standards.md or any
+      other file. It may only read; any assertion of "I fixed it" or
+      any use of a write-tool should fail this check. Emitting
+      unsupported_claims[] with suggested_fix is the correct pattern.

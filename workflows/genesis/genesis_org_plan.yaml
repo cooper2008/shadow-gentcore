@@ -1,0 +1,39 @@
+name: genesis_org_plan
+domain: _genesis
+version: "1.0.0"
+description: >-
+  Pre-planning workflow for "mixed org" Genesis runs. Invokes
+  DomainPlannerAgent only — it proposes how to split a large
+  `teams.<name>` block in workspace.yaml into one or more natural
+  domains. The caller then invokes `genesis_build` once per domain
+  using the emitted `domain_plan[]` entries.
+
+  Use this workflow instead of `genesis_build` when the user has
+  pointed a single team at a large multi-stack org (many repos +
+  many docs) and you're not sure it belongs in one domain.
+
+steps:
+  - name: plan
+    agent: _genesis/DomainPlannerAgent/v1
+    description: "Decide whether the input collapses into one domain, splits cleanly into N, or needs human disambiguation."
+    gate:
+      name: plan_gate
+      # Accept any committed decision. `ask-human` is still a valid terminal
+      # output — the caller must pause and surface the questions, not retry.
+      # The decision enum is enforced by OutputValidator against the manifest's
+      # output_schema, so the gate only needs to confirm something was decided.
+      condition: "status == success and output.decision is not empty"
+      on_fail: retry
+      max_retries: 1
+
+budget:
+  max_tokens: 60000
+  max_cost_usd: 3.0
+  max_duration_seconds: 480
+
+metadata:
+  author: platform-team
+  tags: [genesis, planning, multi-domain, pre-scan]
+  followup:
+    - workflow: genesis_build
+      description: "Run once per entry in domain_plan[] when decision == auto-split."

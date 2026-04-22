@@ -19,6 +19,7 @@ steps:
     description: "Classify discovered knowledge into framework categories"
     gate:
       name: map_gate
+      # Transformation step — real quality enforced upstream at scan_gate.
       condition: "status == success"
       on_fail: retry
       max_retries: 1

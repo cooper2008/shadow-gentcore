@@ -535,3 +535,110 @@ class TestPhase7Evolution:
         output = GENESIS_OUTPUTS["EvolutionAgent"]
         assert output["domain_health"]["overall_score"] > 0
         assert output["domain_health"]["trend"] in ("improving", "stable", "declining")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# PHASE 8: COMPLEX ORG — Genesis Complexity Upgrade end-to-end
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestPhase8ComplexOrg:
+    """End-to-end scenario for the Genesis Complexity Upgrade.
+
+    Simulates a "complex org" input: 3 reference repos + 2 doc versions.
+    Asserts that the upgraded 10-step genesis_build pipeline executes to
+    completion using the deterministic GenesisTestProvider fixtures, that
+    ConflictResolver and ContextVerifier steps run, and that their outputs
+    reach the downstream architect/build/validate gates without tripping
+    them. Also verifies the optional genesis_org_plan pre-planning flow.
+    """
+
+    @pytest.mark.asyncio
+    async def test_complex_org_full_build_pipeline(self):
+        """3 ref repos + 2 doc versions → 10 steps complete, gates pass."""
+        from harness.core.manifest_loader import ManifestLoader
+
+        loader = ManifestLoader()
+        provider = GenesisTestProvider()
+        build_wf = PROJECT_ROOT / "workflows" / "genesis" / "genesis_build.yaml"
+
+        engine, workflow, step_configs = loader.boot_engine(
+            build_wf,
+            domain_root=PROJECT_ROOT,
+            provider=provider,
+            task_input={
+                "industry": "fintech",
+                "domain_name": "complex-org",
+                "team_config": {
+                    "industry": "fintech",
+                    "reference": [
+                        {"path": str(PROJECT_ROOT / "sample_project" / "backend"), "role": "reference"},
+                        {"path": str(PROJECT_ROOT / "sample_project" / "frontend"), "role": "reference"},
+                        {"path": str(PROJECT_ROOT / "sample_project" / "backend"), "role": "sdk"},
+                    ],
+                    "target": [
+                        {"path": str(PROJECT_ROOT / "sample_project" / "backend")},
+                    ],
+                    "docs": [
+                        {"path": str(PROJECT_ROOT / "sample_project" / "docs"), "type": "documents"},
+                        {"path": str(PROJECT_ROOT / "sample_project" / "docs"), "type": "documents"},
+                    ],
+                    "trusted": True,
+                },
+            },
+        )
+        result = await engine.execute_dag(workflow["steps"], step_configs)
+
+        assert result["status"] == "completed", (
+            f"Complex-org pipeline failed: {result.get('error', result.get('failed_step', 'unknown'))}"
+        )
+        assert len(result["step_results"]) == 10
+
+        expected_steps = {
+            "scan", "map", "resolve", "discover_tools", "engineer_context",
+            "verify", "synthesize_tools", "architect", "build", "validate",
+        }
+        assert set(result["step_results"].keys()) == expected_steps
+
+        resolve = result["step_results"]["resolve"]
+        resolve_out = resolve.get("output") or {}
+        assert "resolved_knowledge_map" in resolve_out
+        assert "contested_items" in resolve_out
+
+        verify = result["step_results"]["verify"]
+        verify_out = verify.get("output") or {}
+        assert verify_out.get("grounding_score", 0) >= 0.7
+
+    @pytest.mark.asyncio
+    async def test_complex_org_pre_planning_workflow(self):
+        """genesis_org_plan emits a domain_plan the caller can feed to genesis_build."""
+        from harness.core.manifest_loader import ManifestLoader
+
+        loader = ManifestLoader()
+        provider = GenesisTestProvider()
+        plan_wf = PROJECT_ROOT / "workflows" / "genesis" / "genesis_org_plan.yaml"
+
+        engine, workflow, cfgs = loader.boot_engine(
+            plan_wf,
+            domain_root=PROJECT_ROOT,
+            provider=provider,
+            task_input={
+                "industry": "fintech",
+                "team_name": "big-org",
+                "team_config": {
+                    "industry": "fintech",
+                    "reference": [
+                        {"path": str(PROJECT_ROOT / "sample_project" / "backend")},
+                        {"path": str(PROJECT_ROOT / "sample_project" / "frontend")},
+                    ],
+                    "target": [{"path": str(PROJECT_ROOT / "sample_project" / "backend")}],
+                    "docs": [
+                        {"path": str(PROJECT_ROOT / "sample_project" / "docs"), "type": "documents"},
+                    ],
+                },
+            },
+        )
+        result = await engine.execute_dag(workflow["steps"], cfgs)
+        assert result["status"] == "completed"
+        plan = next(iter(result["step_results"].values())).get("output") or {}
+        assert plan.get("decision") in {"auto-split", "single-domain", "ask-human"}
+        assert isinstance(plan.get("domain_plan"), list)
