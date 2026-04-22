@@ -285,7 +285,11 @@ def validate(path: str, agent_dir: str | None, workflow_file: str | None, domain
               help="Path to the domain directory (scans agents/**/agent_manifest.yaml).")
 @click.option("--agent", "agent_path", default=None,
               help="Path to a single agent version directory or agent_manifest.yaml.")
-def validate_contracts(domain_path: str | None, agent_path: str | None) -> None:
+@click.option("--llm-judge", is_flag=True, default=False,
+              help="Enable LLM-as-judge layer for semantic drift detection. "
+                   "Uses the framework's default provider; set $ANTHROPIC_API_KEY "
+                   "or similar. Adds per-agent LLM call — advisory findings.")
+def validate_contracts(domain_path: str | None, agent_path: str | None, llm_judge: bool) -> None:
     """Validate that each agent's system_prompt matches its manifest contract.
 
     Catches drift between what the prompt tells the LLM to do and what the
@@ -307,6 +311,7 @@ def validate_contracts(domain_path: str | None, agent_path: str | None) -> None:
     """
     from harness.core.prompt_contract_validator import (
         validate_agent_contract,
+        validate_agent_contract_with_judge,
         validate_domain_contracts,
     )
 
@@ -314,13 +319,28 @@ def validate_contracts(domain_path: str | None, agent_path: str | None) -> None:
         click.echo("Error: one of --domain or --agent is required.", err=True)
         raise SystemExit(1)
 
+    judge_provider = None
+    if llm_judge:
+        try:
+            judge_provider = _make_provider(dry_run=False, provider_config_path=None)
+            click.echo("  LLM judge enabled.")
+        except Exception as exc:
+            click.echo(f"Warning: LLM judge requested but provider init failed: {exc}", err=True)
+            click.echo("  Falling back to regex-only validation.", err=True)
+            judge_provider = None
+
     if agent_path:
         ap = Path(agent_path).expanduser().resolve()
         manifest_path = ap / "agent_manifest.yaml" if ap.is_dir() else ap
         if not manifest_path.exists():
             click.echo(f"Not found: {manifest_path}", err=True)
             raise SystemExit(1)
-        findings = validate_agent_contract(manifest_path)
+        if judge_provider is not None:
+            findings = asyncio.run(validate_agent_contract_with_judge(
+                manifest_path, provider=judge_provider,
+            ))
+        else:
+            findings = validate_agent_contract(manifest_path)
         if not findings:
             click.echo(f"✓ {manifest_path.parent.parent.name} — contract aligned.")
             return
