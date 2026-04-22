@@ -394,6 +394,45 @@ class AgentRunner:
             for key, value in promoted.items():
                 if key not in _reserved:
                     wrapper[key] = value
+
+            # Tier-citation scoring (opt-in per agent). Manifest can declare:
+            #   citations:
+            #     min: 1            # at least N citations required
+            #     require_tiers: [T2, T3]   # these tiers must be cited
+            # When `citations:` is absent, scoring still runs but is neutral
+            # (score=1.0 when no citations emitted) — lets gate expressions
+            # use `citation_score` opportunistically without breaking agents
+            # that don't emit citations yet.
+            try:
+                from harness.core.citation_checker import score_citations
+                cit_cfg = self._get(manifest, "citations") or {}
+                min_c = int(cit_cfg.get("min", 0)) if isinstance(cit_cfg, dict) else 0
+                req_tiers = cit_cfg.get("require_tiers") if isinstance(cit_cfg, dict) else None
+                cit_report = score_citations(
+                    promoted if promoted else {},
+                    min_citations=min_c,
+                    require_tiers=req_tiers if isinstance(req_tiers, list) else None,
+                )
+                wrapper["_citation_report"] = {
+                    "score": cit_report.score,
+                    "passed": cit_report.passed,
+                    "total_claims": cit_report.total_claims,
+                    "cited_claims": cit_report.cited_claims,
+                    "findings": [
+                        {"severity": f.severity, "message": f.message, "claim": f.claim}
+                        for f in cit_report.findings
+                    ],
+                }
+                # Also surface scalars at top-level so gate expressions can
+                # use them without walking the dotpath each time:
+                #   condition: "status == completed and citation_score >= 0.75"
+                wrapper["citation_score"] = cit_report.score
+                wrapper["citation_passed"] = cit_report.passed
+            except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "citation scoring failed for %s: %s", agent_id, exc,
+                )
+
             return wrapper
 
         except BudgetExceededError as exc:
