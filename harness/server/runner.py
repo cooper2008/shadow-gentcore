@@ -31,6 +31,7 @@ def _validate_agent_id(agent_id: str) -> None:
 
 _ALLOWED_ENV_VARS = {
     "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
     "OPENAI_API_KEY",
     "BEDROCK_API_KEY",
     "AZURE_OPENAI_API_KEY",
@@ -39,6 +40,11 @@ _ALLOWED_ENV_VARS = {
     "AWS_SESSION_TOKEN",
     "AWS_DEFAULT_REGION",
     "AWS_BEARER_TOKEN_BEDROCK",
+    # Anthropic-compat vendors (shared client, different base_url).
+    "ZHIPU_API_KEY",
+    "GLM_API_KEY",
+    "MINIMAX_API_KEY",
+    "GEMINI_API_KEY",
 }
 
 
@@ -95,7 +101,19 @@ def _make_provider(domain_path: str, dry_run: bool = False) -> Any:
         from harness.providers.anthropic_provider import AnthropicProvider
 
         api_key = os.environ.get(api_key_env, "")
-        return AnthropicProvider(api_key=api_key, model=model, max_tokens=max_tokens)
+        # base_url passthrough for Anthropic-compat vendors (GLM, MiniMax,
+        # etc.). Egress-guard the URL so a malicious provider.yaml can't
+        # point at 169.254.169.254/creds or similar.
+        base_url = cfg.get("base_url")
+        if base_url:
+            from harness.core.egress_guard import check_url_is_safe, EgressBlocked
+            try:
+                check_url_is_safe(base_url)
+            except EgressBlocked as exc:
+                raise ValueError(f"Disallowed base_url {base_url!r}: {exc}") from exc
+        return AnthropicProvider(
+            api_key=api_key, model=model, max_tokens=max_tokens, base_url=base_url,
+        )
 
     if provider_name == "openai":
         from harness.providers.openai_provider import OpenAIProvider

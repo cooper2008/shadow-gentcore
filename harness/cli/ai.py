@@ -461,8 +461,16 @@ def _make_provider(dry_run: bool, provider_config_path: str | None = None, provi
         api_key = os.environ.get(api_key_env, "")
         if api_key:
             from harness.providers.anthropic_provider import AnthropicProvider
-            click.echo(f"  provider: Anthropic API ({model})")
-            return AnthropicProvider(api_key=api_key, model=model, max_tokens=max_tokens)
+            # base_url lets provider.yaml point at Anthropic-compat vendors
+            # (bigmodel.cn GLM, MiniMax, etc.) without needing to set
+            # ANTHROPIC_BASE_URL globally. Previously missing — silently
+            # hit api.anthropic.com with the vendor's key and 401'd.
+            base_url = provider_cfg.get("base_url") or os.environ.get("ANTHROPIC_BASE_URL")
+            suffix = f" via {base_url}" if base_url else ""
+            click.echo(f"  provider: Anthropic API ({model}){suffix}")
+            return AnthropicProvider(
+                api_key=api_key, model=model, max_tokens=max_tokens, base_url=base_url,
+            )
     elif provider_name == "openai":
         api_key = os.environ.get(api_key_env, "")
         if api_key:
@@ -1234,12 +1242,22 @@ def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, d
 
     provider = _make_provider(dry_run, provider_config_path=provider_config_path)
 
-    # Warn before real genesis runs (7+ LLM calls, significant token usage)
+    # Warn before real genesis runs (multi-agent, significant token usage)
     if not dry_run:
         pname = getattr(provider, "provider_name", type(provider).__name__)
         if pname != "DryRunProvider":
-            click.echo(f"\n  Genesis will run 7 agents using {pname}.")
-            click.echo("  Estimated: ~7 LLM calls, ~50k-200k tokens.")
+            # Count steps from the workflow so the warning never drifts
+            # from the real pipeline shape. Falls back to a conservative
+            # estimate on any read failure.
+            try:
+                import yaml as _y
+                wf = _y.safe_load(genesis_workflow.read_text(encoding="utf-8")) or {}
+                step_count = len(wf.get("steps") or [])
+                budget = (wf.get("budget") or {}).get("max_tokens", 500_000)
+            except Exception:
+                step_count, budget = 10, 500_000
+            click.echo(f"\n  Genesis will run {step_count} agent steps using {pname}.")
+            click.echo(f"  Token ceiling: {budget:,} (real cost depends on source size).")
             click.echo("  Tip: use --dry-run to test without charges.\n")
             # Auto-confirm via --yes flag or GENTCORE_AUTO_CONFIRM env var (for CI)
             env_auto = os.environ.get("GENTCORE_AUTO_CONFIRM", "").strip().lower() in ("1", "true", "yes", "on")
