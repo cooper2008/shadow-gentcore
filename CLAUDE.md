@@ -14,8 +14,8 @@ agent-contracts ← shadow-gentcore ← agent-tools ← domain-* (e.g. acme-back
   - **Tier 1** — `standards.md` always-injected (~500 lines)
   - **Tier 2** — `context_retrieve(topic, keywords)` → top-K chunks from `reference_index.yaml` (keyword-indexed, no embeddings)
   - **Tier 3** — `origin_fetch(path)` → live re-fetch from SourceAdapter cache (scope-guarded, audit-logged)
-  - **Tier 4** — `memory_recall(key, k)` → past task outputs (FileMemoryStore JSONL)
-  - **Tier 5** — EvolutionAgent (stubbed) proposes standards/prompt updates from Tier 3 + 4 logs
+  - **Tier 4** — `memory_recall(key, k)` → past task outputs (FileMemoryStore JSONL). Auto-wired in production by `manifest_loader.build_memory_store`; override location via `GENTCORE_MEMORY_DIR`.
+  - **Tier 5** — EvolutionAgent (single-shot + preload) consumes `domain_evolution_signals` aggregated by `harness/core/evolution_signals.py` (origin hotspots, citation weaknesses, memory patterns). Runs via `workflows/genesis/genesis_evolve.yaml`.
 - **Source adapters** — genesis reads from `github://org/repo@ref`, local paths, (+skeletons for Confluence/Notion/Jira). See `docs/SOURCE_ADAPTERS.md`.
 - **Credential auto-propagation** — Builder derives `required_credentials:` per agent from tool packs; writes `REQUIRED_CREDENTIALS.md`; OAuth groups handled (`./ai credentials oauth-setup <group>`). See `docs/CREDENTIALS_GUIDE.md`.
 - **ToolSynthesizerAgent** — closes tool gaps via known MCP servers or synthesized packs, gated by a static security scanner.
@@ -88,7 +88,7 @@ validate→build, validate→context. Adjacent workflows: `genesis_scan.yaml`
 ## Testing
 
 ```bash
-.venv/bin/pytest harness/tests/ -q    # 1869 tests
+.venv/bin/pytest harness/tests/ -q    # 1950 tests
 ./ai test smoke                       # full journey (zero tokens)
 ./ai test smoke --cross-domain        # backend + frontend in parallel
 ./ai validate-contracts --domain X    # prompt ↔ manifest drift

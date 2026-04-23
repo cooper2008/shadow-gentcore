@@ -559,7 +559,12 @@ def run_agent(agent_id: str, task: str, domain_path: str, dry_run: bool, output_
     provider = _make_provider(dry_run)
     tool_executor = ToolExecutor()
     register_builtins(tool_executor)
-    runner = AgentRunner(provider=provider, tool_executor=tool_executor)
+    from harness.core.manifest_loader import build_memory_store
+    runner = AgentRunner(
+        provider=provider,
+        tool_executor=tool_executor,
+        memory_store=build_memory_store(domain_root),
+    )
 
     task_envelope = TaskEnvelope(
         task_id=f"cli-{agent_id.replace('/', '-')}",

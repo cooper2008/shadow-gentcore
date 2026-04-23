@@ -204,14 +204,25 @@ the adapter.
 
 ### What gets recorded
 
-AgentRunner auto-records `key="run_output"` entries when a memory_store
-is wired in:
+AgentRunner auto-records `key="run_output"` entries after every completed
+run when a memory_store is wired in. The store IS wired by default in
+production — `manifest_loader.build_memory_store(domain_root)` is called
+from `boot_engine`, `server/runner.py`, and `./ai run agent` so every
+execution path writes to:
 
-```python
-runner = AgentRunner(provider=p, memory_store=FileMemoryStore())
-# after a successful run:
-#   .gentcore/memory/<domain>_<agent>/memories.jsonl grows by 1 line
 ```
+<domain_root>/.gentcore/memory/<agent>/memories.jsonl
+```
+
+Set `GENTCORE_MEMORY_DIR` to relocate the store (e.g. to share a pool
+across domains for cross-domain genesis memory):
+
+```bash
+GENTCORE_MEMORY_DIR=~/.gentcore/genesis_memory ./ai genesis build --domain …
+```
+
+Resolution order: `memory_root` argument → `GENTCORE_MEMORY_DIR` env →
+`<domain_root>/.gentcore/memory`.
 
 ### What the agent can query
 
@@ -223,6 +234,10 @@ await executor.execute({
 # → stdout: past entries newest-first, with age labels
 ```
 
+AgentRunner also auto-injects the last 3 `run_output` entries into each
+new invocation's context — an agent doesn't have to call `memory_recall`
+to get short-term continuity, only to reach further back.
+
 Empty recall returns a friendly "This may be the agent's first run" hint
 — not an error.
 
@@ -231,22 +246,31 @@ Empty recall returns a friendly "This may be the agent's first run" hint
 `FileMemoryStore` has `max_entries` (default 100) + optional
 `max_age_seconds`. Oldest entries evict on each `store()` call.
 
-## Tier 5 — EvolutionAgent (stubbed)
+## Tier 5 — EvolutionAgent
 
-Reads:
-- `.gentcore/origin_log.jsonl` across agents (what Tier 2 missed)
-- Memory DBs across agents (which tasks keep failing vs. succeeding)
-- Gate results in run records (which steps retry most)
+`harness/core/evolution_signals.py::gather_evolution_signals()` aggregates
+three runtime audit trails into a structured bundle:
 
-Weekly batch job should:
-1. Cluster origin_log entries → "Agent X fetched `src/auth/session.py`
-   12 times in 30 days."
-2. Generate a diff proposing new chunks or standards.md updates.
-3. Open a PR / surface in the review UI.
-4. Human approves before anything merges.
+- `<domain>/.gentcore/origin_log.jsonl` → `OriginHotspot` list (paths
+  re-fetched ≥2×, ranked by `count × 30-day recency half-life ×
+  not-found penalty`)
+- Memory stores across agents → `MemoryPattern` list (signatures seen
+  ≥3×, template candidates)
+- Supplied run records with `_citation_report` → `CitationWeakness`
+  list (agents whose avg `citation_score` fell below 0.75 over ≥3 runs,
+  with which tiers were most under-cited)
 
-Status: skeleton at `agents/_genesis/EvolutionAgent/v1/`. Implementation
-tracking in the roadmap.
+The bundle is injected into `EvolutionAgent/v1` via the `context.preload:
+[domain_evolution_signals]` source (wired in
+`manifest_loader._build_preload_item`). The agent runs single-shot in
+`chain_of_thought` mode with `tools: []` — no iterative file_read needed.
+
+Workflow: `workflows/genesis/genesis_evolve.yaml` wires
+EvolutionAgent → AgentBuilderAgent (apply) → QualityGateAgent
+(revalidate) with a `revalidate_to_apply` feedback loop.
+
+Zero LLM calls in the aggregator itself — deterministic, cheap, safe to
+schedule on a cron.
 
 ## Tuning per agent
 
