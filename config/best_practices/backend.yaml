@@ -1,0 +1,203 @@
+version: "1.0"
+industry: backend
+description: >-
+  Baseline for modern async Python backends (FastAPI + SQLAlchemy 2.0 +
+  PostgreSQL is the canonical stack, but principles apply to any HTTP
+  service that accepts untrusted traffic and talks to a database).
+
+principles:
+  - id: structured_logging
+    title: Structured logging with request correlation
+    severity: must
+    why: >-
+      Unstructured logs are unusable at any non-trivial traffic level. A
+      single correlation ID threaded through every log line for a
+      request is the difference between "3-minute root-cause analysis"
+      and "3-hour grep session." Every modern observability pipeline
+      (Datadog, Honeycomb, Grafana Loki) assumes JSON logs — flat-text
+      logs force you into lossy regex parsers.
+    must_have:
+      - "Every log line emits request_id (or trace_id)"
+      - "JSON output format in production"
+      - "Configurable log level per module"
+      - "Secrets redacted before logging"
+    anti_patterns:
+      - "print() statements reaching production"
+      - "Logging full request/response bodies without redaction"
+    related_chunks: []
+    source_urls:
+      - "https://12factor.net/logs"
+      - "https://opentelemetry.io/docs/concepts/signals/logs/"
+
+  - id: async_db_pooling
+    title: Async connection pooling with bounded pool size
+    severity: must
+    why: >-
+      An async service that doesn't pool DB connections creates and
+      tears down TCP connections per request, which is 50-200× slower
+      than pooled access and hits the PostgreSQL `max_connections`
+      ceiling under modest load. The pool size should be *bounded* to
+      a number the DB can support, not left at SQLAlchemy's defaults.
+    must_have:
+      - "Async engine with connection pool (e.g. asyncpg)"
+      - "Explicit pool_size + max_overflow"
+      - "Health check that verifies pool is serving connections"
+    anti_patterns:
+      - "create_async_engine() with no pool args"
+      - "Opening a new Session per function instead of request-scoped"
+    source_urls:
+      - "https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html"
+      - "https://magicstack.github.io/asyncpg/current/"
+
+  - id: input_validation_at_boundary
+    title: Validate all untrusted input at the API boundary
+    severity: must
+    why: >-
+      Every handler must validate its input with a typed schema
+      (Pydantic v2 / marshmallow / similar) at the API boundary. Invalid
+      input should fail with a structured 4xx BEFORE reaching business
+      logic. Trusting input past the boundary is the #1 source of
+      injection and deserialization bugs.
+    must_have:
+      - "Pydantic (or equivalent) models for every request body"
+      - "Path/query parameter types declared (not str-by-default)"
+      - "4xx responses carry machine-readable error codes"
+    anti_patterns:
+      - "Reading request.json() then indexing by string key"
+      - "`pass` on validation errors"
+    source_urls:
+      - "https://fastapi.tiangolo.com/tutorial/body/"
+      - "https://docs.pydantic.dev/latest/"
+
+  - id: migrations_not_autogen
+    title: Reviewed database migrations, not autogenerate-and-ship
+    severity: must
+    why: >-
+      `alembic revision --autogenerate` writes a MIGRATION DRAFT, not a
+      migration. Autogen routinely misses enum changes, column type
+      widening that requires a table rewrite, and renames (which it
+      represents as drop+add — catastrophic in production). Every
+      migration must be human-reviewed and include a down() path.
+    must_have:
+      - "Alembic migrations (or equivalent) in version control"
+      - "Every up() has a matching down() unless irreversible + documented"
+      - "CI runs migrations against a fresh DB before merge"
+    anti_patterns:
+      - "Committing autogen output without reading it"
+      - "Missing down() with a comment like '# TODO fill in later'"
+    source_urls:
+      - "https://alembic.sqlalchemy.org/en/latest/autogenerate.html"
+
+  - id: test_real_database
+    title: Integration tests hit a real database
+    severity: must
+    why: >-
+      Mocking the database in tests lets broken SQL, missing indexes,
+      and migration mistakes ship to prod. Every service needs an
+      integration test tier that runs against a real DB (testcontainers
+      in CI, docker-compose locally). Unit tests with mocks are fine
+      for pure business logic but can't cover the ORM layer.
+    must_have:
+      - "testcontainers or equivalent in CI"
+      - "Tests run migrations then assert schema"
+      - "Fixtures reset DB state between tests"
+    anti_patterns:
+      - "Mocking the entire session at the unit-test layer only"
+      - "Relying on `assert model.save.called` without verifying persistence"
+    source_urls:
+      - "https://testcontainers.com/"
+      - "https://pytest-docs.readthedocs.io/en/latest/"
+
+  - id: rate_limiting_and_backpressure
+    title: Rate limiting + backpressure at the edge
+    severity: should
+    why: >-
+      An async server accepts connections faster than it processes them
+      — under load this balloons memory and queues until OOM. A rate
+      limiter at the reverse proxy (or an ASGI middleware) + bounded
+      worker counts + explicit timeouts prevent cascading failures.
+    must_have:
+      - "Per-IP or per-API-key rate limit (reverse proxy or middleware)"
+      - "Request timeout enforced server-side (not just by the client)"
+    anti_patterns:
+      - "No timeout on outbound DB/HTTP calls"
+      - "Worker count = CPU count on an IO-bound service (should be higher)"
+    source_urls:
+      - "https://www.nginx.com/blog/rate-limiting-nginx/"
+
+  - id: secret_management
+    title: Secrets via env or a secret manager — never in config files
+    severity: must
+    why: >-
+      Secrets in git history are a breach even after rotation (the
+      attacker grabbed the historical commit). Keep them in environment
+      variables for local dev and a managed secret store (AWS Secrets
+      Manager, Vault, GCP Secret Manager) in production.
+    must_have:
+      - "No credentials committed to the repo (verified by pre-commit + CI scan)"
+      - "12-factor style env var config"
+      - "Production secrets rotated on a schedule"
+    anti_patterns:
+      - "`api_key: sk-…` in config.yaml"
+      - ".env files committed to git (even in examples)"
+    source_urls:
+      - "https://12factor.net/config"
+      - "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html"
+
+  - id: health_and_readiness_split
+    title: Separate /health and /ready endpoints
+    severity: should
+    why: >-
+      Kubernetes (and most orchestrators) distinguish liveness from
+      readiness for a reason: /health should return 200 while the
+      process is alive even if slow; /ready only returns 200 when
+      dependencies (DB, cache) are reachable. Combining them causes
+      pods to get killed when the DB has a brief hiccup.
+    must_have:
+      - "/health — dependency-free liveness probe"
+      - "/ready — validates DB/cache/queue connectivity"
+    source_urls:
+      - "https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/"
+
+  - id: error_surface_contract
+    title: Errors are part of the API contract
+    severity: should
+    why: >-
+      Clients can't handle errors they don't know about. Document the
+      error shape (code, message, retriable flag, request_id) in the
+      OpenAPI spec and return it consistently. "500 Internal Server
+      Error" with no body forces every client to guess what happened.
+    must_have:
+      - "Consistent error envelope across all endpoints"
+      - "request_id included in error responses"
+      - "Non-retriable errors never return 5xx"
+    source_urls:
+      - "https://tools.ietf.org/html/rfc7807"
+
+  - id: observability_signals
+    title: Metrics + traces + logs, not just logs
+    severity: should
+    why: >-
+      Three pillars, not one. Logs tell you WHAT happened to a request;
+      metrics tell you the aggregate (p99 latency, error rate, queue
+      depth); traces tell you WHERE time was spent across services.
+      Using only logs means you can't alert on SLO burns.
+    must_have:
+      - "At minimum: request count, latency histogram, error rate per endpoint"
+      - "OpenTelemetry tracing for cross-service calls"
+    source_urls:
+      - "https://opentelemetry.io/docs/concepts/signals/"
+
+anti_patterns:
+  - "Shared mutable state across requests (module-level dicts, class-level lists)"
+  - "Catching `Exception:` and returning 200 OK"
+  - "Synchronous I/O in an async handler (will block the event loop)"
+  - "Using `sudo pip install` inside a Dockerfile"
+  - "String concatenation to build SQL (use parametrized queries)"
+
+canonical_sources:
+  - "https://12factor.net/"
+  - "https://fastapi.tiangolo.com/"
+  - "https://docs.sqlalchemy.org/en/20/"
+  - "https://opentelemetry.io/docs/"
+  - "https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html"

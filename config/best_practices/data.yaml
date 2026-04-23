@@ -1,0 +1,127 @@
+version: "1.0"
+industry: data
+description: >-
+  Baseline for data platforms — ETL pipelines, warehousing, analytics,
+  ML feature stores. Applies whether the stack is Spark + Delta, dbt +
+  Snowflake, or Airflow + Postgres.
+
+principles:
+  - id: idempotent_pipelines
+    title: Every pipeline step is idempotent
+    severity: must
+    why: >-
+      Pipelines fail. Retries happen. A non-idempotent step that gets
+      retried after a partial write corrupts the output — same job run
+      twice should never produce different rows than run once. Use
+      upserts (MERGE), target partitions by business-day, or write to
+      staging then atomically swap. Never "append and dedup later."
+    must_have:
+      - "Writes are MERGE/UPSERT or partition overwrite, not INSERT append"
+      - "Idempotency key stored + checked before work begins"
+      - "Reruns on a specific partition are supported and documented"
+    anti_patterns:
+      - "INSERT then DELETE duplicates as cleanup"
+      - "Mutable counters incremented per row"
+    source_urls:
+      - "https://docs.getdbt.com/docs/build/incremental-models"
+
+  - id: schema_contracts
+    title: Explicit schema contracts at pipeline boundaries
+    severity: must
+    why: >-
+      A column renamed upstream silently becomes null downstream until
+      a dashboard breaks three weeks later. Enforce schemas (Avro,
+      Protobuf, dbt contracts, Great Expectations) at every pipeline
+      boundary and fail fast when input shape changes.
+    must_have:
+      - "Input schema enforced (contract or runtime check)"
+      - "Output schema enforced"
+      - "Schema change → pipeline alarm, not silent null propagation"
+    source_urls:
+      - "https://docs.getdbt.com/docs/collaborate/govern/model-contracts"
+
+  - id: data_quality_tests
+    title: Data-quality tests alongside logic tests
+    severity: must
+    why: >-
+      Unit tests on transformation code are necessary but not
+      sufficient — a correctly written join on bad source data
+      produces bad output. Add volume, freshness, uniqueness, and
+      not-null checks on every critical table; fail the pipeline (or
+      at minimum page oncall) when they break.
+    must_have:
+      - "unique + not_null tests on primary keys"
+      - "row-count anomaly detection on critical tables"
+      - "Freshness SLA (per table) with alerting"
+    source_urls:
+      - "https://greatexpectations.io/"
+      - "https://docs.getdbt.com/docs/build/data-tests"
+
+  - id: pii_classification
+    title: PII classification + access controls from day one
+    severity: must
+    why: >-
+      PII that's loose in the warehouse is both a compliance risk and
+      a data-breach amplifier. Classify columns (public, internal,
+      confidential, PII), enforce row- or column-level access via
+      grants, and avoid copying PII into downstream marts unless
+      explicitly needed.
+    must_have:
+      - "Column-level tagging (PII, internal, public)"
+      - "Role-based access control tied to the tags"
+      - "PII never leaves the warehouse without masking"
+    source_urls:
+      - "https://gdpr.eu/data-protection-impact-assessment-template/"
+
+  - id: backfill_safety
+    title: Backfills are first-class, not ad-hoc
+    severity: should
+    why: >-
+      Running a 6-month backfill via a forked production DAG and
+      Slack coordination is how outages happen. Every pipeline should
+      support parameterized backfill over a date range, with
+      concurrency limits so the warehouse isn't starved.
+    must_have:
+      - "Pipelines accept start_date + end_date parameters"
+      - "Concurrent backfill runs bounded (max N parallel partitions)"
+      - "Backfill is logged separately from incremental runs"
+    source_urls:
+      - "https://airflow.apache.org/docs/apache-airflow/stable/dag-run.html#backfill"
+
+  - id: lineage_tracking
+    title: Column-level lineage surfaced to engineers
+    severity: should
+    why: >-
+      "Which models break if I change this column?" takes 20 minutes
+      with lineage, 4 hours with grep. dbt, OpenLineage, or similar
+      tools give it to you essentially for free. Make it required
+      before shipping any change to a critical model.
+    must_have:
+      - "Lineage graph accessible to every engineer"
+      - "Impact analysis step in the model-change checklist"
+    source_urls:
+      - "https://openlineage.io/"
+
+  - id: cost_awareness
+    title: Query/job cost visibility in CI + dashboards
+    severity: should
+    why: >-
+      A poorly written query can spin up a 1,000-USD/hr cluster for a
+      tiny dataset. Surface per-query cost estimates in PR comments
+      (Snowflake, BigQuery both support this) and alert on outlier
+      spend at the pipeline level.
+    must_have:
+      - "Per-query cost estimate surfaced in dev loop"
+      - "Warehouse-level spend dashboard with alerting"
+
+anti_patterns:
+  - "Storing secrets in a warehouse table labelled 'config'"
+  - "Hard-coding prod database hostnames in notebooks"
+  - "Deleting raw data 'to save space' — raw layer is immutable"
+  - "Doing business logic in the BI layer instead of transformation SQL"
+
+canonical_sources:
+  - "https://docs.getdbt.com/"
+  - "https://www.databricks.com/glossary/data-lakehouse"
+  - "https://openlineage.io/"
+  - "https://dataengineeringroadmap.com/"

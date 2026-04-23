@@ -1114,6 +1114,35 @@ def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, d
             "trusted": True,
         }
 
+        # Prompt-based genesis: `intent:` is a free-form description of what
+        # the domain should be. When present with sources it's a scanning
+        # hint; when present without sources it triggers the research
+        # fallback downstream (BestPracticeResearchAgent). Kept optional —
+        # domain.yaml without `intent:` behaves exactly as before.
+        intent = domain_cfg.get("intent")
+        if isinstance(intent, str) and intent.strip():
+            team_config["intent"] = intent.strip()
+
+        # Best-practice overlay control. Supported shapes on domain.yaml:
+        #   best_practices: true                    # opt-in with defaults
+        #   best_practices: false                   # explicit opt-out
+        #   best_practices: { enabled: true, ... }  # full config
+        # Default behaviour (field absent): the overlay runs when a matching
+        # industry library exists — opt-out at gate level, no silent changes
+        # to existing flows.
+        bp_raw = domain_cfg.get("best_practices")
+        if bp_raw is not None:
+            if isinstance(bp_raw, bool):
+                team_config["best_practices"] = {"enabled": bp_raw}
+            elif isinstance(bp_raw, dict):
+                team_config["best_practices"] = bp_raw
+            else:
+                click.echo(
+                    f"Warning: domain.yaml `best_practices:` must be bool or mapping, "
+                    f"got {type(bp_raw).__name__} — ignoring.",
+                    err=True,
+                )
+
         # Reference / target / docs — each entry may be:
         #   - a bare path string (local)
         #   - {path: "..."} (local)

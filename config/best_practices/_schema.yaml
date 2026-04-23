@@ -1,0 +1,56 @@
+# Best-practice library schema. Each industry file under config/best_practices/
+# conforms to this shape. BestPracticeAdvisorAgent reads the matching file by
+# `industry` name and uses it to compute the overlay.
+#
+# Design notes:
+#   * Principles are ADDITIVE to whatever standards.md already covers — the
+#     advisor emits a GAP analysis, not a replacement.
+#   * Each principle has enough detail that the advisor can reason about
+#     coverage without having to re-fetch source_urls on every run (though
+#     it may, for the top 2-3 principles).
+#   * Keep total file ≤200 principles — larger than that and the advisor
+#     can't keep everything in context at 8-16K tokens.
+#
+# How to add a new industry file:
+#   1. Copy this schema to config/best_practices/<industry>.yaml
+#   2. Replace the example principles with real, authoritative guidance
+#   3. Cite canonical_sources with permanent URLs (doc landing pages,
+#      not blog posts or vendored copies)
+#   4. Commit — next genesis run with `industry: <yours>` picks it up.
+
+version: "1.0"
+industry: <industry name>  # must match domain.yaml `industry:` field
+description: >-
+  One-paragraph summary of what "good" looks like in this industry.
+
+# Principles are the core of the library. Each is a discrete
+# best-practice that a domain MUST or SHOULD have. The advisor compares
+# these against the generated standards.md and reports gaps.
+principles:
+  - id: <snake_case_id>                  # stable identifier used by gap lists
+    title: <short human title>
+    severity: must | should | nice       # must = P0 gap; should = P1; nice = P2
+    why: >-
+      One-paragraph explanation of WHY this matters. The advisor quotes
+      this verbatim in its gap analysis, so write for the domain team
+      who's reading best_practices.md, not for library authors.
+    must_have:                           # concrete markers of coverage
+      - <requirement 1>
+      - <requirement 2>
+    anti_patterns:                       # things that look like coverage but aren't
+      - <anti-pattern 1>
+    related_chunks: []                   # optional: Tier 2 chunk IDs that
+                                         # document the HOW for this principle
+    source_urls:                         # 1-3 authoritative URLs (doc
+      - <url 1>                          # landing pages, specs, RFCs)
+
+# Anti-patterns are domain-wide "don't do X" rules. Surface in the
+# advisor output as a separate section.
+anti_patterns:
+  - <anti-pattern 1>
+
+# Canonical sources are URLs the BestPracticeResearchAgent can fetch
+# when running in zero-source mode. Kept small (≤10) so research runs
+# stay fast.
+canonical_sources:
+  - <url 1>

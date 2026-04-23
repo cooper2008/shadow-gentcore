@@ -1,0 +1,138 @@
+version: "1.0"
+industry: frontend
+description: >-
+  Baseline for modern single-page applications (React / Vue / Svelte
+  with TypeScript). Applies to any JS/TS frontend that ships to a
+  browser and calls a backend API.
+
+principles:
+  - id: typescript_strict
+    title: TypeScript strict mode from day one
+    severity: must
+    why: >-
+      TypeScript in loose mode (noImplicitAny off, strictNullChecks off)
+      catches a small fraction of the type bugs it's designed to catch.
+      Strict mode is cheap to adopt at project start and painful to
+      migrate to later — just turn it on now.
+    must_have:
+      - "tsconfig strict: true (implies noImplicitAny, strictNullChecks, etc.)"
+      - "No `any` escape hatches without a TODO + justification"
+      - "CI fails on tsc errors"
+    anti_patterns:
+      - "@ts-ignore sprinkled without explanation"
+      - "Shared types defined only on the backend side"
+    source_urls:
+      - "https://www.typescriptlang.org/tsconfig#strict"
+
+  - id: data_fetching_layer
+    title: Dedicated data-fetching layer, not ad-hoc fetch()
+    severity: must
+    why: >-
+      Scattering fetch() calls across components leads to duplicate
+      requests, inconsistent error handling, and no central place for
+      auth headers/retries/caching. A data-fetching library (TanStack
+      Query, SWR, RTK Query) provides all of that for free.
+    must_have:
+      - "Single data-fetching abstraction across the app"
+      - "Loading + error states rendered for every remote call"
+      - "Retries + exponential backoff on transient failures"
+    anti_patterns:
+      - "useEffect + fetch + useState for every API call"
+      - "Swallowing errors with `.catch(() => {})`"
+    source_urls:
+      - "https://tanstack.com/query/latest/docs/framework/react/overview"
+
+  - id: accessibility_baseline
+    title: WCAG 2.1 AA baseline + keyboard navigation
+    severity: must
+    why: >-
+      Accessibility isn't optional — legally in many jurisdictions, and
+      practically for any app with meaningful reach. Semantic HTML +
+      alt text + keyboard focus management + sufficient contrast covers
+      80% of what AA requires with near-zero engineering cost.
+    must_have:
+      - "Semantic HTML (button, nav, main, aside — not div soup)"
+      - "alt text on every content image"
+      - "Keyboard-reachable interactive elements"
+      - "Contrast ≥ 4.5:1 for body text, 3:1 for UI components"
+    anti_patterns:
+      - "`<div onClick>` for buttons (keyboard + screen-reader broken)"
+      - "Color-only status indicators (red/green with no icon or label)"
+    source_urls:
+      - "https://www.w3.org/WAI/WCAG21/quickref/"
+
+  - id: error_boundary_coverage
+    title: Error boundaries around async islands
+    severity: should
+    why: >-
+      A thrown error in a leaf component tears down the whole React
+      tree without boundaries. Wrap each major async island (route,
+      page section, widget fed from an API) in an error boundary so
+      one bad response doesn't blank the whole app.
+    must_have:
+      - "Error boundary at the route level minimum"
+      - "Fallback UI that lets the user recover (reload, retry)"
+    source_urls:
+      - "https://react.dev/reference/react/Component#catching-rendering-errors-with-an-error-boundary"
+
+  - id: bundle_size_budget
+    title: Explicit bundle-size budget enforced in CI
+    severity: should
+    why: >-
+      Frontend perf regresses silently — a new dependency adds 200KB,
+      the bundle grows 10% per quarter, and suddenly TTI is 4s on a
+      3G connection. Setting a budget (`size-limit`, Lighthouse CI)
+      that fails the build surfaces regressions at PR time.
+    must_have:
+      - "Bundle-size CI check with a hard budget"
+      - "Lazy-loading for non-critical routes"
+      - "Tree-shakeable imports (per-function, not whole-module)"
+    anti_patterns:
+      - "import * as _ from 'lodash' (imports the whole library)"
+    source_urls:
+      - "https://github.com/ai/size-limit"
+
+  - id: api_contract_types
+    title: API contract types shared between frontend and backend
+    severity: should
+    why: >-
+      Two hand-written type definitions for the same API will drift.
+      Share them: OpenAPI → openapi-typescript, GraphQL → codegen,
+      tRPC for end-to-end Node. The frontend then fails to compile
+      (not fails at runtime) when the backend changes a response shape.
+    must_have:
+      - "Types generated from a single spec, not hand-authored"
+    source_urls:
+      - "https://openapi-ts.dev/"
+
+  - id: csrf_and_xss_defense
+    title: CSRF + XSS defense at the app layer, not just the server
+    severity: must
+    why: >-
+      Backend protections (CSP, CSRF tokens, HttpOnly cookies) are
+      necessary but not sufficient. The frontend must avoid
+      `dangerouslySetInnerHTML` without sanitization, never eval user
+      input, and store session tokens in HttpOnly cookies — not
+      localStorage, which is reachable by any injected script.
+    must_have:
+      - "Session tokens in HttpOnly cookies, not localStorage"
+      - "User-supplied HTML sanitized through DOMPurify (or similar)"
+      - "CSP deployed and reported (report-uri or report-to)"
+    anti_patterns:
+      - "innerHTML = userInput"
+      - "localStorage.setItem('token', authToken)"
+    source_urls:
+      - "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html"
+
+anti_patterns:
+  - "useEffect dependency arrays with `[]` that silently capture stale state"
+  - "Mutating props directly"
+  - "CSS-in-JS solutions that ship runtime style computation for static styles"
+  - "Prop-drilling 5+ layers deep (use context or a store)"
+
+canonical_sources:
+  - "https://react.dev/"
+  - "https://www.typescriptlang.org/docs/"
+  - "https://tanstack.com/query/latest/docs/framework/react/overview"
+  - "https://web.dev/"
+  - "https://cheatsheetseries.owasp.org/"
