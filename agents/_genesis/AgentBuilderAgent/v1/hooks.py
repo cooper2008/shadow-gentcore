@@ -18,6 +18,97 @@ from pathlib import Path
 from typing import Any
 
 
+_EXECUTION_MODE_ALIASES: dict[str, str] = {
+    # Architect/free-form categories → valid framework strategies.
+    "reasoning": "chain_of_thought",
+    "fast-codegen": "direct",
+    "fast_codegen": "direct",
+    "codegen": "direct",
+    "single-shot": "direct",
+    "single_shot": "direct",
+    "single_turn": "direct",
+    "research": "chain_of_thought",
+    "analysis": "chain_of_thought",
+    "planning": "plan_execute",
+    "plan": "plan_execute",
+    # Already-canonical values map to themselves, added defensively so the
+    # remap step doesn't accidentally nuke a correct value.
+    "react": "react",
+    "chain_of_thought": "chain_of_thought",
+    "plan_execute": "plan_execute",
+    "self_ask": "self_ask",
+    "tree_of_thought": "tree_of_thought",
+    "direct": "direct",
+}
+
+_ON_FAIL_ALIASES: dict[str, str] = {
+    "continue": "degrade",
+    "skip": "degrade",
+    "fail": "abort",
+    "stop": "abort",
+    "escalate": "escalate_human",
+    "rollback_to": "rollback",
+    # canonical
+    "retry": "retry",
+    "retry_fresh": "retry_fresh",
+    "rollback": "rollback",
+    "abort": "abort",
+    "escalate_human": "escalate_human",
+    "degrade": "degrade",
+    "fallback": "fallback",
+}
+
+
+def _normalize_enums(path: str, content: str) -> str:
+    """Rewrite common GLM/MiniMax enum mis-emissions before we write to disk.
+
+    Genesis LLMs frequently confuse the architect's free-form `category`
+    label (e.g. `reasoning`, `fast-codegen`) with the framework's
+    `execution_mode.primary` enum, and similarly emit `on_fail: continue`
+    / `on_fail: fail` in workflows where the schema expects
+    `degrade`/`abort`. `schema_validator` would later reject those as
+    `Unknown execution_mode: …` / `unknown gate on_fail: …`, breaking
+    downstream runs. Normalising at write-time is a defensive net: the
+    Builder prompt carries the same guidance but real-model output
+    still drifts.
+
+    Applies ONLY to agent_manifest.yaml and workflow YAMLs — detected by
+    filename — so ordinary docs/prompts aren't touched.
+    """
+    if not content or not isinstance(content, str):
+        return content
+    p_lower = path.lower()
+    is_agent = p_lower.endswith("agent_manifest.yaml")
+    is_workflow = (
+        (p_lower.startswith("workflows/") or "/workflows/" in p_lower)
+        and p_lower.endswith((".yaml", ".yml"))
+    )
+    if not (is_agent or is_workflow):
+        return content
+
+    import re
+    out = content
+
+    if is_agent:
+        # `primary: reasoning` → `primary: chain_of_thought`
+        def _mode_sub(m: "re.Match[str]") -> str:
+            indent, value = m.group(1), m.group(2).strip().strip("'\"")
+            canonical = _EXECUTION_MODE_ALIASES.get(value.lower(), value)
+            return f"{indent}primary: {canonical}"
+        out = re.sub(r"(^[ \t]*)primary:[ \t]+([A-Za-z0-9_\-]+)",
+                     _mode_sub, out, flags=re.MULTILINE)
+
+    if is_workflow:
+        def _on_fail_sub(m: "re.Match[str]") -> str:
+            indent, value = m.group(1), m.group(2).strip().strip("'\"")
+            canonical = _ON_FAIL_ALIASES.get(value.lower(), value)
+            return f"{indent}on_fail: {canonical}"
+        out = re.sub(r"(^[ \t]*)on_fail:[ \t]+([A-Za-z0-9_\-]+)",
+                     _on_fail_sub, out, flags=re.MULTILINE)
+
+    return out
+
+
 def _resolve_files_from_result(result: Any) -> list[dict[str, Any]]:
     """Find the `files` array regardless of where the output parser placed it."""
     # Preferred: result["output"] is a dict with "files" key
@@ -84,6 +175,10 @@ def post_execute(manifest: Any, task: Any, result: Any) -> Any:
         if not p.is_absolute():
             p = out_root / p
         try:
+            # Normalize enum mis-emissions (execution_mode, on_fail) before
+            # writing. Keeps generated domains passing ./ai validate even
+            # when the LLM slipped `reasoning` / `continue` through.
+            content = _normalize_enums(raw_path, content)
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content, encoding="utf-8")
             written.append(str(p))

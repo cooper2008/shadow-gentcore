@@ -47,11 +47,11 @@ For each `{AgentName}` in the roster, emit exactly these three files:
 - `id`: `{domain_name}/{AgentName}/v1`
 - `domain`: `{domain_name}`
 - `pack`: from architect spec or `core`
-- `category`: from architect spec (reasoning, fast-codegen, etc.)
+- `category`: from architect spec — free-form label (e.g. `reasoning`, `fast-codegen`, `planning`). NOT the execution_mode.
 - `version`: `"1.0.0"`
 - `description`: short purpose
 - `system_prompt_ref`: `system_prompt.md`
-- `execution_mode`: `{primary: <mode>, ...}` from architect's spec
+- `execution_mode`: `{primary: <mode>, ...}` — `<mode>` MUST be one of the six framework-supported strategies, exactly: `react`, `chain_of_thought`, `plan_execute`, `self_ask`, `tree_of_thought`, `direct`. Never use the architect's `category` label here. If the architect spec suggests `reasoning`, map to `chain_of_thought`. If it suggests `fast-codegen`, map to `direct` (single-shot) or `react` (if the agent calls tools). The schema validator rejects any other value.
 - `tools`: from architect's `tool_assignments` for this agent
 - `constraints`, `permissions`: from architect's spec
 - `input_schema`, `output_schema`: from architect's spec
@@ -94,7 +94,7 @@ steps:
     gate:
       name: <gate_name>
       condition: "status == success"
-      on_fail: retry
+      on_fail: retry          # MUST be one of: retry, retry_fresh, rollback, abort, escalate_human, degrade, fallback. Never `continue` or `fail` — those are not supported.
       max_retries: 2
 
 budget:

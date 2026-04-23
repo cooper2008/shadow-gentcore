@@ -106,3 +106,69 @@ def test_hook_preserves_non_builder_shape() -> None:
     out = hooks.post_execute({}, {"output_dir": "/tmp"}, legacy)
     # Unchanged — no `files` array to process
     assert out is legacy or out == legacy
+
+
+class TestEnumNormalization:
+    """Safety net: Builder rewrites common GLM/MiniMax enum drift before
+    files hit disk so `./ai validate` doesn't reject the generated domain."""
+
+    def test_agent_manifest_reasoning_to_chain_of_thought(self) -> None:
+        hooks = _load_hook()
+        before = "execution_mode:\n  primary: reasoning\n  max_react_steps: 1\n"
+        after = hooks._normalize_enums("agents/X/v1/agent_manifest.yaml", before)
+        assert "primary: chain_of_thought" in after
+        assert "primary: reasoning" not in after
+
+    def test_agent_manifest_fast_codegen_to_direct(self) -> None:
+        hooks = _load_hook()
+        after = hooks._normalize_enums(
+            "agents/X/v1/agent_manifest.yaml",
+            "execution_mode:\n  primary: fast-codegen\n",
+        )
+        assert "primary: direct" in after
+
+    def test_workflow_on_fail_continue_to_degrade(self) -> None:
+        hooks = _load_hook()
+        after = hooks._normalize_enums(
+            "workflows/x.yaml",
+            "steps:\n  - name: s\n    gate:\n      on_fail: continue\n",
+        )
+        assert "on_fail: degrade" in after
+        assert "on_fail: continue" not in after
+
+    def test_workflow_on_fail_fail_to_abort(self) -> None:
+        hooks = _load_hook()
+        after = hooks._normalize_enums(
+            "workflows/x.yaml",
+            "steps:\n  - gate:\n      on_fail: fail\n",
+        )
+        assert "on_fail: abort" in after
+
+    def test_nested_workflows_path_also_normalized(self) -> None:
+        """Full-tree path like /tmp/my/workflows/x.yaml still matches."""
+        hooks = _load_hook()
+        after = hooks._normalize_enums(
+            "/tmp/my/workflows/x.yaml",
+            "      on_fail: fail\n",
+        )
+        assert "on_fail: abort" in after
+
+    def test_canonical_values_preserved(self) -> None:
+        """Don't mangle already-valid enum values."""
+        hooks = _load_hook()
+        src = "execution_mode:\n  primary: react\n"
+        assert hooks._normalize_enums("agents/X/v1/agent_manifest.yaml", src) == src
+        src = "      on_fail: retry\n"
+        assert hooks._normalize_enums("workflows/x.yaml", src) == src
+
+    def test_non_agent_non_workflow_file_untouched(self) -> None:
+        """Markdown docs that happen to mention these words aren't rewritten."""
+        hooks = _load_hook()
+        doc = "primary: reasoning\non_fail: continue\n"
+        assert hooks._normalize_enums("context/standards.md", doc) == doc
+
+    def test_unknown_alias_passes_through(self) -> None:
+        """If GLM invents a brand-new label, we leave it for the validator to flag."""
+        hooks = _load_hook()
+        src = "execution_mode:\n  primary: quantum_superposition\n"
+        assert hooks._normalize_enums("agents/X/v1/agent_manifest.yaml", src) == src
