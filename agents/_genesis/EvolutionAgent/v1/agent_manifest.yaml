@@ -10,10 +10,14 @@ system_prompt_ref: system_prompt.md
 execution_mode:
   primary: chain_of_thought
 
-tools:
-  - name: file_read
-    description: "Read run logs, agent manifests, and domain configs for analysis"
-    pack: "toolpack://core/filesystem"
+# Runtime audit trails are pre-aggregated into a single markdown bundle by
+# `harness/core/evolution_signals.py` and injected via context.preload below.
+# Zero LLM-side file iteration — the agent reads the bundle and reasons.
+tools: []
+
+context:
+  preload:
+    - domain_evolution_signals
 
 constraints:
   read_only: true

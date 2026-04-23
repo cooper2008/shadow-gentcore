@@ -276,3 +276,32 @@ class TestDataclassConstruction:
             summary="summary", recurrence_count=3, avg_success_score=0.9,
         )
         assert mp.summary == "summary"
+
+
+# ── Preload dispatcher wiring ────────────────────────────────────────────
+
+
+class TestPreloadIntegration:
+    def test_preload_dispatcher_builds_item(self, tmp_path: Path) -> None:
+        """_build_preload_item('domain_evolution_signals', root) returns a context_items entry."""
+        from harness.core.manifest_loader import _build_preload_item
+        _write_origin_log(tmp_path, [
+            {"path": "/x.md", "source_uri": "g", "timestamp": time.time()},
+            {"path": "/x.md", "source_uri": "g", "timestamp": time.time()},
+        ])
+        item = _build_preload_item("domain_evolution_signals", tmp_path)
+        assert item is not None
+        assert item["source"] == "preload:domain_evolution_signals"
+        assert "Evolution Signals" in item["content"]
+        assert "/x.md" in item["content"]
+
+    def test_preload_dispatcher_without_domain_root_returns_none(self) -> None:
+        from harness.core.manifest_loader import _build_preload_item
+        assert _build_preload_item("domain_evolution_signals", None) is None
+
+    def test_preload_dispatcher_on_newly_deployed_domain(self, tmp_path: Path) -> None:
+        """No audit logs yet — bundle still renders with 'no significant signals' message."""
+        from harness.core.manifest_loader import _build_preload_item
+        item = _build_preload_item("domain_evolution_signals", tmp_path)
+        assert item is not None
+        assert "No significant runtime signals" in item["content"]

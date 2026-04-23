@@ -76,6 +76,10 @@ def _build_preload_item(
         if not domain_root:
             return None
         return _preload_project_file_tree(Path(domain_root))
+    if preload_name == "domain_evolution_signals":
+        if not domain_root:
+            return None
+        return _preload_domain_evolution_signals(Path(domain_root))
     logger.warning("Unknown context.preload source: %r", preload_name)
     return None
 
@@ -361,6 +365,32 @@ def _preload_project_file_tree(domain_root: Path) -> dict[str, Any] | None:
         "source": "preload:project_file_tree",
         "content": "\n".join(lines),
         "priority": 6,  # between standards (10) and reference chunks (5)
+    }
+
+
+def _preload_domain_evolution_signals(domain_root: Path) -> dict[str, Any] | None:
+    """Tier 5 — aggregate runtime audit trails for EvolutionAgent.
+
+    Reads `.gentcore/origin_log.jsonl` + per-agent memory stores (and
+    optional run records, which the runtime supplies post-hoc) and
+    produces a single markdown bundle so the Evolution agent can
+    consume pre-aggregated signals via preload instead of iterating
+    file_read over a hundred JSONL files.
+    """
+    try:
+        from harness.core.evolution_signals import gather_evolution_signals
+    except Exception as exc:
+        logger.warning("evolution_signals unavailable for preload: %s", exc)
+        return None
+    try:
+        signals = gather_evolution_signals(domain_root)
+    except Exception as exc:
+        logger.warning("gather_evolution_signals failed for %s: %s", domain_root, exc)
+        return None
+    return {
+        "source": "preload:domain_evolution_signals",
+        "content": signals.format_markdown(),
+        "priority": 6,
     }
 
 
