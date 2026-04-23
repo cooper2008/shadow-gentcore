@@ -23,6 +23,11 @@ execution_mode:
   # and write zero files. Now: one LLM call, fast disk I/O, schema intact.
   primary: react
   max_react_steps: 1
+  # Builder emits a multi-file payload (≥12 files × multi-KB each). The
+  # response alone commonly tops 40K tokens. Reserve 400K so GLM/MiniMax
+  # don't get starved mid-emission — when they do, promoted output
+  # collapses to `{}` and every downstream file ends up missing.
+  budget_tokens: 400000
 
 # No tools — Builder emits structured JSON, hook writes files.
 tools: []
