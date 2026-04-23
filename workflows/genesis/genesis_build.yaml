@@ -84,6 +84,27 @@ steps:
       condition: "status == success and output.grounding_score >= 0.7"
       on_fail: degrade
 
+  # Layer 3c: Best-practice overlay (NEW — Tier 1.5)
+  # Reads the freshly-generated standards.md + industry best-practice
+  # library and writes `context/best_practices.md` — a gap-analysis
+  # document that layers ON TOP of standards without modifying it.
+  # Tier 1.5 preload (`best_practices_overlay`) injects it alongside
+  # standards at agent-run time. No-op when no industry library exists
+  # (advisor's own post_execute hook gracefully handles that path).
+  - name: advise
+    agent: _genesis/BestPracticeAdvisorAgent/v1
+    depends_on: [engineer_context]
+    description: "Write best_practices.md overlay when an industry library exists"
+    gate:
+      name: advise_gate
+      # Permissive: any successful advisor completion passes. The
+      # overlay is non-blocking — if the industry library is missing
+      # or the advisor produces nothing actionable, we still want the
+      # pipeline to continue. Only a hard error (status != success)
+      # degrades.
+      condition: "status == success"
+      on_fail: degrade
+
   # Layer 3b: Close tool gaps surfaced by discover_tools. Wraps existing
   # public MCP servers when they match, or synthesizes new tool pack YAMLs
   # for gaps unique to the domain. Credentials flow up to Builder for
@@ -104,7 +125,7 @@ steps:
   # Layer 4: Design
   - name: architect
     agent: _genesis/AgentArchitectAgent/v2
-    depends_on: [map, discover_tools, synthesize_tools, engineer_context, verify]
+    depends_on: [map, discover_tools, synthesize_tools, engineer_context, verify, advise]
     description: "Design agent roster, workflow DAG, tool assignments"
     gate:
       name: architect_gate

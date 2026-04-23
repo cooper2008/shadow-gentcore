@@ -1,0 +1,100 @@
+id: _genesis/BestPracticeAdvisorAgent/v1
+domain: _genesis
+pack: core
+category: reasoning
+version: "1.0.0"
+description: >-
+  Reads the freshly-generated standards.md + industry best-practice library
+  and emits a gap-analysis markdown document (best_practices.md, Tier 1.5)
+  to layer ON TOP of standards without modifying it. Runs in parallel with
+  ContextVerifierAgent so the overlay is ready when Builder writes files.
+
+system_prompt_ref: system_prompt.md
+hooks_ref: hooks.py
+
+execution_mode:
+  primary: react
+  max_react_steps: 1
+  # Library + standards.md + reasoning output; leave headroom for
+  # slow vendors (GLM, MiniMax) that burn tokens on thought traces.
+  budget_tokens: 200000
+
+# No tools — the library is preloaded, standards.md flows in via input.
+tools: []
+
+context:
+  preload:
+    - best_practice_library
+
+constraints:
+  read_only: true
+  output_format: markdown
+
+permissions:
+  file_edit: deny
+  file_create: deny
+  shell_command: deny
+  network_access: deny
+
+input_schema:
+  type: object
+  required: [documents]
+  properties:
+    documents:
+      type: object
+      description: "ContextEngineerAgent's documents block — we read standards_md."
+      required: [standards_md]
+      properties:
+        standards_md:
+          type: string
+          description: "The freshly-generated Tier 1 standards document."
+    industry:
+      type: string
+      description: "Industry key for the library preload. Inferred from domain.yaml when missing."
+    intent:
+      type: string
+      description: "Optional — the user's prompt from domain.yaml, if any."
+
+output_schema:
+  type: object
+  required: [best_practices_md, gap_summary, files]
+  properties:
+    best_practices_md:
+      type: string
+      description: >-
+        The full overlay document. Becomes `context/best_practices.md`
+        on disk. Bounded to ≤300 lines. Structure: summary → gaps by
+        severity → follow-up links.
+    gap_summary:
+      type: object
+      required: [total_principles, covered, gaps_must, gaps_should, gaps_nice]
+      properties:
+        total_principles: {type: integer, minimum: 0}
+        covered:          {type: integer, minimum: 0}
+        gaps_must:        {type: integer, minimum: 0}
+        gaps_should:      {type: integer, minimum: 0}
+        gaps_nice:        {type: integer, minimum: 0}
+        coverage_pct:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: "(covered / total_principles) × 100, rounded."
+    # Emit-then-write: Builder discovers files[] on the task result and
+    # writes them to disk (same pattern as ContextEngineerAgent).
+    files:
+      type: array
+      description: >-
+        Exactly one entry for `context/best_practices.md`. Builder picks
+        this up automatically — no extra wiring needed.
+      items:
+        type: object
+        required: [path, content]
+        properties:
+          path: {type: string}
+          content: {type: string}
+
+grading_criteria_ref: grading_criteria.yaml
+
+metadata:
+  author: platform-team
+  tags: [genesis, best-practices, overlay, tier1.5, meta-agent]

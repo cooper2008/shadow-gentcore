@@ -117,6 +117,10 @@ def _build_preload_item(
         if not domain_root:
             return None
         return _preload_best_practices_overlay(Path(domain_root))
+    if preload_name == "best_practice_library":
+        if not domain_root:
+            return None
+        return _preload_best_practice_library(Path(domain_root))
     logger.warning("Unknown context.preload source: %r", preload_name)
     return None
 
@@ -428,6 +432,85 @@ def _preload_domain_evolution_signals(domain_root: Path) -> dict[str, Any] | Non
         "source": "preload:domain_evolution_signals",
         "content": signals.format_markdown(),
         "priority": 6,
+    }
+
+
+def _preload_best_practice_library(domain_root: Path) -> dict[str, Any] | None:
+    """Industry best-practice library preloaded for research/advisor agents.
+
+    Reads the domain's `industry:` from `{domain_root}/domain.yaml`, loads
+    the matching `config/best_practices/<industry>.yaml`, and renders it
+    as markdown. BestPracticeResearchAgent consumes this to synthesize
+    a knowledge_map in prompt-only mode; BestPracticeAdvisorAgent uses
+    it to compute gaps against the generated standards.md.
+
+    Returns None when:
+      * domain.yaml is missing or has no `industry:` field
+      * no curated library exists for that industry
+    """
+    domain_yaml = domain_root / "domain.yaml"
+    if not domain_yaml.exists():
+        return None
+    try:
+        cfg = yaml.safe_load(domain_yaml.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        logger.warning("domain.yaml parse failed for best_practice_library: %s", exc)
+        return None
+    industry = str((cfg or {}).get("industry") or "").strip()
+    if not industry:
+        return None
+
+    try:
+        from harness.core.best_practices import load_library
+    except Exception as exc:
+        logger.warning("best_practices loader unavailable: %s", exc)
+        return None
+    lib = load_library(industry)
+    if lib is None:
+        return None
+
+    # Render the library as markdown. Keep it compact so the preload
+    # stays token-efficient even for libraries with 20+ principles.
+    lines = [
+        f"# Best-practice library: `{lib.industry}` (v{lib.version})",
+        "",
+    ]
+    if lib.description:
+        lines.append(lib.description.strip())
+        lines.append("")
+    lines.append(f"## Principles ({len(lib.principles)})")
+    lines.append("")
+    for p in lib.principles:
+        lines.append(f"### `{p.id}` — {p.title}  ·  _{p.severity}_")
+        if p.why:
+            lines.append(f"**Why:** {p.why}")
+        if p.must_have:
+            lines.append("**Must-have markers:**")
+            for m in p.must_have:
+                lines.append(f"- {m}")
+        if p.anti_patterns:
+            lines.append("**Anti-patterns:**")
+            for a in p.anti_patterns:
+                lines.append(f"- {a}")
+        if p.source_urls:
+            lines.append("**References:** " + ", ".join(p.source_urls))
+        lines.append("")
+    if lib.anti_patterns:
+        lines.append("## Cross-cutting anti-patterns")
+        lines.append("")
+        for a in lib.anti_patterns:
+            lines.append(f"- {a}")
+        lines.append("")
+    if lib.canonical_sources:
+        lines.append("## Canonical sources (for fetch_url research)")
+        lines.append("")
+        for s in lib.canonical_sources:
+            lines.append(f"- {s}")
+
+    return {
+        "source": f"preload:best_practice_library:{lib.industry}",
+        "content": "\n".join(lines),
+        "priority": 7,
     }
 
 

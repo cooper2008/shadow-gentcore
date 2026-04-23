@@ -1,0 +1,49 @@
+criteria:
+  - name: library_usage
+    description: >-
+      Every library principle must be either mapped into knowledge_map
+      or explicitly skipped with a rationale in research_notes. Each
+      standards_sources / compliance_rules / reference_topics entry
+      carries the source principle_id so downstream can trace it.
+    weight: 0.25
+
+  - name: intent_grounding
+    description: >-
+      knowledge_map reflects the intent, not a generic library copy —
+      focus_areas shape which principles are upweighted, explicit
+      concerns (PII, audit, multi-tenant) surface in compliance_rules,
+      and workflow_processes cover the intent's task categories.
+    weight: 0.20
+
+  - name: workflow_completeness
+    description: >-
+      At minimum feature_delivery + bug_fix are present with confidence
+      1.0. Additional processes (migration, security_audit, refactor,
+      docs_refresh, perf_investigation) appear when intent or library
+      signals justify them. Each has signals[] explaining why.
+    weight: 0.15
+
+  - name: honest_coverage
+    description: >-
+      coverage scores are calibrated — thin intent or small library
+      produces low scores, not inflated ones. Gaps array carries any
+      category with coverage < 50. No score inflation to squeak past
+      the map_gate.
+    weight: 0.15
+
+  - name: schema_compliance
+    description: >-
+      Output matches KnowledgeMapperAgent's schema exactly so downstream
+      steps (resolve, engineer_context) don't need any changes. Required
+      categories present; workflow entries have name/confidence/signals;
+      coverage covers all six dimensions.
+    weight: 0.15
+
+  - name: traceability
+    description: >-
+      research_notes[] explains each mapping decision and each skip so
+      operators can audit the synthesis. Principle IDs appear on every
+      entry derived from the library.
+    weight: 0.10
+
+pass_threshold: 0.75

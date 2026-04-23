@@ -1,0 +1,47 @@
+criteria:
+  - name: gap_detection_accuracy
+    description: >-
+      Every library principle is classified as covered or gap based on
+      what standards.md actually says — not on vibes. Must-level
+      principles that standards misses surface as critical gaps;
+      principles standards already carries are not repeated.
+    weight: 0.30
+
+  - name: overlay_structure
+    description: >-
+      best_practices_md follows the declared section order (Critical
+      gaps → Recommended → Nice to have → Anti-patterns → Follow-up).
+      Sections with zero entries are omitted entirely. Document stays
+      under 300 lines.
+    weight: 0.20
+
+  - name: traceability
+    description: >-
+      Every gap subsection cites the library's principle_id verbatim so
+      operators can trace the overlay back to the authoritative source.
+      related_chunks + source_urls are surfaced where present.
+    weight: 0.15
+
+  - name: actionability
+    description: >-
+      Suggestions are concrete and tied to the domain (not generic
+      "add logging"). References specific Tier-2 chunks or canonical
+      URLs the team can follow.
+    weight: 0.15
+
+  - name: files_contract
+    description: >-
+      files[] contains exactly one entry pointing at
+      `context/best_practices.md`. No other files emitted, no alternate
+      paths, so Builder's post_execute writes it cleanly.
+    weight: 0.10
+
+  - name: zero_gap_honesty
+    description: >-
+      When coverage is complete, the agent still emits a short
+      best_practices_md saying so rather than silently producing an
+      empty output. The Tier 1.5 overlay file must exist so the
+      preload contract is consistent.
+    weight: 0.10
+
+pass_threshold: 0.75

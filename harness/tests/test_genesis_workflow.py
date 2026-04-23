@@ -84,19 +84,21 @@ class TestGenesisWorkflowStructure:
     def test_evolve_workflow_exists(self) -> None:
         assert GENESIS_EVOLVE_WORKFLOW.exists()
 
-    def test_build_workflow_has_10_steps(self) -> None:
+    def test_build_workflow_has_11_steps(self) -> None:
         # Grew 7→8 when synthesize_tools (Phase A) was inserted, then
         # 8→10 when resolve (ConflictResolver) and verify (ContextVerifier)
-        # were added by the complexity upgrade.
+        # were added by the complexity upgrade, then 10→11 when the Tier 1.5
+        # best-practice advisor (advise) was added between verify and
+        # synthesize_tools in the DAG.
         wf = load_workflow(GENESIS_BUILD_WORKFLOW)
-        assert len(wf["steps"]) == 10
+        assert len(wf["steps"]) == 11
 
     def test_build_workflow_step_names(self) -> None:
         wf = load_workflow(GENESIS_BUILD_WORKFLOW)
         names = [s["name"] for s in wf["steps"]]
         assert names == [
             "scan", "map", "resolve", "discover_tools", "engineer_context",
-            "verify", "synthesize_tools", "architect", "build", "validate",
+            "verify", "advise", "synthesize_tools", "architect", "build", "validate",
         ]
 
     def test_build_workflow_all_steps_have_agents(self) -> None:
@@ -246,7 +248,7 @@ class TestGenesisPipelineExecution:
         result = await run_genesis_pipeline(GENESIS_BUILD_WORKFLOW)
         expected = {
             "scan", "map", "resolve", "discover_tools", "engineer_context",
-            "verify", "synthesize_tools", "architect", "build", "validate",
+            "verify", "advise", "synthesize_tools", "architect", "build", "validate",
         }
         assert set(result["step_results"].keys()) == expected
 
@@ -265,6 +267,10 @@ class TestGenesisPipelineExecution:
         assert started.index("resolve") < started.index("engineer_context")
         # verify runs after engineer_context
         assert started.index("engineer_context") < started.index("verify")
+        # advise (Tier 1.5 overlay) also runs after engineer_context and
+        # completes before architect — it's a parallel sibling of verify.
+        assert started.index("engineer_context") < started.index("advise")
+        assert started.index("advise") < started.index("architect")
         # synthesize_tools runs after discover_tools (its primary input)
         assert started.index("discover_tools") < started.index("synthesize_tools")
         # both verify and synthesize_tools complete before architect
@@ -286,7 +292,7 @@ class TestGenesisPipelineExecution:
         # The execution log should show dep injection
         log = result["execution_log"]
         step_started_events = [e for e in log if e.get("event") == "step_started"]
-        assert len(step_started_events) == 10
+        assert len(step_started_events) == 11
 
     @pytest.mark.asyncio
     async def test_scan_workflow_completes(self) -> None:

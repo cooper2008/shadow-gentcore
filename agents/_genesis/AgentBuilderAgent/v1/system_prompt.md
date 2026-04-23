@@ -53,6 +53,7 @@ For each `{AgentName}` in the roster, emit exactly these three files:
 - `system_prompt_ref`: `system_prompt.md`
 - `execution_mode`: `{primary: <mode>, ...}` — `<mode>` MUST be one of the six framework-supported strategies, exactly: `react`, `chain_of_thought`, `plan_execute`, `self_ask`, `tree_of_thought`, `direct`. Never use the architect's `category` label here. If the architect spec suggests `reasoning`, map to `chain_of_thought`. If it suggests `fast-codegen`, map to `direct` (single-shot) or `react` (if the agent calls tools). The schema validator rejects any other value.
 - `tools`: from architect's `tool_assignments` for this agent
+- `context`: `{preload: [best_practices_overlay]}` — emit this block on EVERY generated agent. The `best_practices_overlay` preload source reads `context/best_practices.md` at runtime (Tier 1.5) and injects it alongside standards.md. The file may not exist — the preload is a no-op in that case, so adding it is always safe. Extend the list with domain-specific preload sources when architect flags them, but never drop `best_practices_overlay`.
 - `constraints`, `permissions`: from architect's spec
 - `input_schema`, `output_schema`: from architect's spec
 - `grading_criteria_ref`: `grading_criteria.yaml`
