@@ -14,6 +14,30 @@ def _is_json_like(text: str) -> bool:
     return t.startswith("{") and t.endswith("}")
 
 
+def _satisfies_schema_shape(text: str, schema: dict | None) -> bool:
+    """Return True if `text` parses to a dict that covers the schema's required fields.
+
+    Empty `{}` is NOT a valid answer when the schema declares required
+    fields — we want the react loop's schema-coerce retry to fire.
+    `_is_json_like` alone accepts `{}` because it parses, which silently
+    masked GLM/MiniMax failures where the model closes its turn with
+    an empty object.
+    """
+    if not schema or not text:
+        return False
+    import json as _json
+    try:
+        parsed = _json.loads(text.strip())
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    required = schema.get("required") or []
+    if required and not any(k in parsed for k in required):
+        return False
+    return True
+
+
 def _build_anthropic_tools(
     tool_executor: Any,
     allowed: list[Any] | None = None,
@@ -268,8 +292,17 @@ class ReActStrategy(ExecutionStrategy):
             })
 
             if not tool_calls:
-                # No tool calls = final answer; re-call with schema if needed
-                if output_schema and not _is_json_like(content):
+                # No tool calls = final answer; re-call with schema if needed.
+                # Trigger schema-coerce when content either isn't JSON-shaped
+                # OR parses to an empty/shape-deficient dict (e.g. `{}` or
+                # one missing all of the declared `required` fields). The
+                # latter covers the observed GLM/MiniMax failure where the
+                # model closes its turn with literal `{}` after tool calls.
+                needs_coerce = (
+                    output_schema
+                    and (not _is_json_like(content) or not _satisfies_schema_shape(content, output_schema))
+                )
+                if needs_coerce:
                     import json
                     schema_hint = (
                         f"\n\nYour output MUST be a JSON object matching this schema:\n"
