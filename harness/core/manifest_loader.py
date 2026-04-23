@@ -38,6 +38,35 @@ def _architect_v2_enabled() -> bool:
     return raw not in ("0", "false", "no", "off")
 
 
+def build_memory_store(domain_root: Path) -> Any | None:
+    """Build the Tier 4 FileMemoryStore for a domain.
+
+    Resolution:
+      1. `GENTCORE_MEMORY_DIR` env var — lets multiple domains share a
+         store (e.g. cross-domain genesis memory).
+      2. `<domain_root>/.gentcore/memory` — default, naturally scoped
+         per-domain so history accumulates across re-runs.
+
+    Returns None if the memory_store module can't be imported — the
+    rest of the runtime degrades gracefully (AgentRunner no-ops when
+    `memory_store is None`).
+    """
+    try:
+        from harness.core.memory_store import FileMemoryStore
+    except Exception as exc:
+        logger.debug("Memory store unavailable, running without memory: %s", exc)
+        return None
+    override = os.environ.get("GENTCORE_MEMORY_DIR")
+    if override:
+        base = Path(override).expanduser()
+        if base.name != "memory":
+            base = base / ".gentcore" / "memory"
+    else:
+        base = domain_root / ".gentcore" / "memory"
+    logger.debug("FileMemoryStore wired at %s", base)
+    return FileMemoryStore(base_dir=base)
+
+
 def _build_preload_item(
     preload_name: str,
     domain_root: str | Path | None = None,
@@ -812,8 +841,15 @@ class ManifestLoader:
         except Exception as exc:
             logger.debug("MCP tools registration skipped (config missing or unavailable): %s", exc)
 
-        # Build AgentRunner
-        runner = AgentRunner(provider=provider, tool_executor=tool_executor)
+        # Build AgentRunner with persistent per-domain memory. Tier 4 —
+        # AgentRunner auto-injects the last N run_outputs as context and
+        # records each new completed run when memory_store is wired in.
+        memory_store = build_memory_store(Path(domain_root))
+        runner = AgentRunner(
+            provider=provider,
+            tool_executor=tool_executor,
+            memory_store=memory_store,
+        )
 
         # Build output validator for post-execution quality checks
         from harness.core.output_validator import OutputValidator

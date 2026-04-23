@@ -209,7 +209,12 @@ async def run_agent(
 
         tool_executor = ToolExecutor()
         register_builtins(tool_executor)
-        runner = AgentRunner(provider=provider, tool_executor=tool_executor)
+        from harness.core.manifest_loader import build_memory_store
+        runner = AgentRunner(
+            provider=provider,
+            tool_executor=tool_executor,
+            memory_store=build_memory_store(domain_root),
+        )
 
         task_envelope = TaskEnvelope(
             task_id=f"api-{agent_id.replace('/', '-')}-{uuid.uuid4().hex[:8]}",

@@ -89,6 +89,40 @@ class TestEmptyMemory:
         assert "first run" in result["stdout"].lower()
 
 
+class TestBuildMemoryStoreHelper:
+    """build_memory_store from manifest_loader — the factory that wires
+    AgentRunner's persistent memory at boot_engine time."""
+
+    def test_default_is_per_domain(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GENTCORE_MEMORY_DIR", raising=False)
+        from harness.core.manifest_loader import build_memory_store
+        store = build_memory_store(tmp_path)
+        assert store is not None
+        store.store(agent_id="A", key="k", value="v")
+        assert (tmp_path / ".gentcore" / "memory" / "A" / "memories.jsonl").exists()
+
+    def test_env_var_overrides_domain(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """GENTCORE_MEMORY_DIR redirects memory outside the domain — for
+        cross-domain (genesis) memory sharing."""
+        shared = tmp_path / "shared-genesis-memory"
+        domain = tmp_path / "some-domain"
+        domain.mkdir()
+        monkeypatch.setenv("GENTCORE_MEMORY_DIR", str(shared))
+        from harness.core.manifest_loader import build_memory_store
+        store = build_memory_store(domain)
+        store.store(agent_id="GenesisAgent", key="learned", value="pattern")
+        assert (shared / ".gentcore" / "memory" / "GenesisAgent" / "memories.jsonl").exists()
+        assert not (domain / ".gentcore").exists()  # domain NOT polluted
+
+    def test_env_var_pointing_at_memory_dir_used_as_is(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        direct = tmp_path / "memory"
+        monkeypatch.setenv("GENTCORE_MEMORY_DIR", str(direct))
+        from harness.core.manifest_loader import build_memory_store
+        store = build_memory_store(tmp_path / "irrelevant")
+        store.store(agent_id="A", key="k", value="v")
+        assert (direct / "A" / "memories.jsonl").exists()
+
+
 class TestEntryRendering:
     def test_key_filter_narrows_results(self, tmp_path: Path) -> None:
         store_root = tmp_path / ".gentcore" / "memory"
