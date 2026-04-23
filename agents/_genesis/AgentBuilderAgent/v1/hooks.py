@@ -127,6 +127,14 @@ def post_execute(manifest: Any, task: Any, result: Any) -> Any:
 
     if isinstance(result, dict):
         result["output"] = enriched_output
+        # The AgentRunner's promotion path reads `parsed_output` (set by
+        # OutputParser from the raw LLM emission) and lifts its keys to
+        # the top level where gates see them. Without also updating
+        # `parsed_output`, `build_quality` / `files_created` never
+        # surface and `output.build_quality.files_written >= 3` fails
+        # despite the files actually being on disk. See agent_runner.py
+        # line ~382 for the read site.
+        result["parsed_output"] = enriched_output
         # status should reflect actual write success, not just LLM completion
         if failed and not written:
             result["status"] = "error"
