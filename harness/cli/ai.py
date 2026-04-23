@@ -1320,11 +1320,33 @@ def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, d
 
     click.echo(f"Status: {result['status']}")
     click.echo(f"Steps completed: {len(result['step_results'])}")
+    failed_step = result.get("failed_step")
     for step_name, step_result in result["step_results"].items():
         status = step_result.get("status", "unknown")
         # Look in result.result.content for the actual agent output
         raw = step_result.get("output", step_result.get("result", {}))
         if isinstance(raw, dict):
+            # For the failing step, dump the full output JSON so the
+            # operator can see which schema field the gate expression
+            # actually checked against. Without this, "Gate failed for
+            # map" is unactionable — you can't tell whether coverage
+            # was 0, missing, or a string.
+            if step_name == failed_step:
+                import json as _json
+                try:
+                    pretty = _json.dumps(raw, indent=2, default=str)
+                except Exception:
+                    pretty = str(raw)
+                click.echo(f"  {step_name}: {status}")
+                click.echo("    output (gate-evaluated against this):")
+                for line in pretty.splitlines()[:40]:
+                    click.echo(f"      {line}")
+                if len(pretty.splitlines()) > 40:
+                    click.echo(f"      ... ({len(pretty.splitlines()) - 40} more lines truncated)")
+                err = step_result.get("error")
+                if err:
+                    click.echo(f"    error: {str(err)[:400]}")
+                continue
             raw = raw.get("content", "")
         output_preview = str(raw)[:120]
         click.echo(f"  {step_name}: {status}")
