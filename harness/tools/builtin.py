@@ -142,7 +142,12 @@ class MemoryRecallAdapter:
         except (TypeError, ValueError):
             k = 5
 
-        base = arguments.get("memory_root") or arguments.get("domain_root") or ".gentcore/memory"
+        base = (
+            arguments.get("memory_root")
+            or arguments.get("domain_root")
+            or os.environ.get("GENTCORE_MEMORY_DIR")
+            or ".gentcore/memory"
+        )
         base_path = Path(base).expanduser()
         if base_path.name != "memory":
             base_path = base_path / ".gentcore" / "memory"
