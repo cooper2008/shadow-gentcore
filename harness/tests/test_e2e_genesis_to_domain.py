@@ -591,11 +591,12 @@ class TestPhase8ComplexOrg:
         assert result["status"] == "completed", (
             f"Complex-org pipeline failed: {result.get('error', result.get('failed_step', 'unknown'))}"
         )
-        assert len(result["step_results"]) == 10
+        # 11 steps after best-practice advisor joined the DAG.
+        assert len(result["step_results"]) == 11
 
         expected_steps = {
             "scan", "map", "resolve", "discover_tools", "engineer_context",
-            "verify", "synthesize_tools", "architect", "build", "validate",
+            "verify", "advise", "synthesize_tools", "architect", "build", "validate",
         }
         assert set(result["step_results"].keys()) == expected_steps
 

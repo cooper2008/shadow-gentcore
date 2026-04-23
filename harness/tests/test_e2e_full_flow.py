@@ -107,11 +107,12 @@ class TestBootEngineWiring:
         # Genesis Complexity Upgrade grew the pipeline from 8 -> 10 steps by
         # inserting ConflictResolverAgent (resolve) between map and the
         # tools/context fan-out, and ContextVerifierAgent (verify) after
-        # engineer_context.
-        assert len(step_configs) == 10
+        # engineer_context. Then 10 -> 11 when BestPracticeAdvisorAgent
+        # (advise) was added as a parallel sibling of verify.
+        assert len(step_configs) == 11
         expected_steps = {
             "scan", "map", "resolve", "discover_tools", "engineer_context",
-            "verify", "synthesize_tools", "architect", "build", "validate",
+            "verify", "advise", "synthesize_tools", "architect", "build", "validate",
         }
         assert set(step_configs.keys()) == expected_steps
 
@@ -176,7 +177,10 @@ class TestFullGenesisPipelineThroughBootEngine:
         result = await engine.execute_dag(workflow["steps"], step_configs)
 
         assert result["status"] == "completed", f"Pipeline failed: {result.get('error', result.get('failed_step', 'unknown'))}"
-        assert len(result["step_results"]) == 10
+        # 11 steps after best-practice advisor joined the DAG (scan, map,
+        # resolve, discover_tools, engineer_context, verify, advise,
+        # synthesize_tools, architect, build, validate).
+        assert len(result["step_results"]) == 11
 
         # Collect scores
         scores = {}
