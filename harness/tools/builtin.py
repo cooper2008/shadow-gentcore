@@ -527,9 +527,17 @@ class HTTPServiceAdapter:
             req = self._build(arguments)
         except KeyError as exc:
             return {"success": False, "stdout": "", "stderr": f"Missing argument: {exc}", "exit_code": 1}
+        # Egress guard: DNS-resolve the host and reject if it targets
+        # internal / metadata / private-range IPs. Also re-checks each
+        # redirect hop so a public→private redirect chain is blocked.
+        # Cross-model review: static URL scan can't catch DNS rebinding
+        # or redirect-based SSRF; this is the runtime complement.
+        from harness.core.egress_guard import EgressGuard, EgressBlocked
+        guard = EgressGuard()
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.request(
+                resp = await guard.safe_request(
+                    client,
                     method=req.get("method", "GET"),
                     url=req["url"],
                     headers=req.get("headers", {}),
@@ -544,6 +552,16 @@ class HTTPServiceAdapter:
                     "stderr": "",
                     "exit_code": 0 if resp.is_success else 1,
                 }
+        except EgressBlocked as exc:
+            # Surface as structured rejection so audit trails show
+            # "blocked by policy" instead of a generic exception.
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": f"egress_blocked: {exc}",
+                "exit_code": 1,
+                "blocked_by_policy": True,
+            }
         except Exception as exc:
             return {"success": False, "stdout": "", "stderr": str(exc), "exit_code": 1}
 
