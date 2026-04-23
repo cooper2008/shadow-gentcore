@@ -84,11 +84,13 @@ validate→build, validate→context. Adjacent workflows: `genesis_scan.yaml`
 - [AUTOMATION_GUIDE.md](docs/AUTOMATION_GUIDE.md) — CI/cron/webhook patterns
 - [SYSTEM_GUIDE.md](docs/SYSTEM_GUIDE.md) — architecture deep-dive
 - [TEAM_GUIDE.md](docs/TEAM_GUIDE.md) — operational guide
+- [BEST_PRACTICES_OVERLAY.md](docs/BEST_PRACTICES_OVERLAY.md) — Tier 1.5 overlay: what it is, how libraries work, authoring guidance
+- [PROMPT_BASED_GENESIS.md](docs/PROMPT_BASED_GENESIS.md) — build a domain from an `intent:` prompt with zero source repos
 
 ## Testing
 
 ```bash
-.venv/bin/pytest harness/tests/ -q    # 1950 tests
+.venv/bin/pytest harness/tests/ -q    # 2039 tests
 ./ai test smoke                       # full journey (zero tokens)
 ./ai test smoke --cross-domain        # backend + frontend in parallel
 ./ai validate-contracts --domain X    # prompt ↔ manifest drift
