@@ -62,9 +62,20 @@ GEMINI_PRO_THINKING_HINT = (
 # trailing commentary after the closing brace. Reminder keeps it tight.
 GLM_HINT = (
     "\n\n--- Model-specific guidance ---\n"
-    "Your FINAL reply must be exactly one JSON object matching the declared "
-    "output_schema — no leading or trailing text, no markdown fences. After "
-    "all tool calls complete, emit the JSON object and stop."
+    "CRITICAL — output delivery:\n"
+    "If the tool list includes `submit_output`, you MUST call it exactly "
+    "once as your final action, passing the completed structured output "
+    "as its arguments. Never end a turn with prose or an empty `{}` "
+    "when submit_output is available — that silently discards your work "
+    "and the workflow gate fails.\n"
+    "If submit_output is NOT in the tool list, your FINAL reply must be "
+    "exactly one JSON object matching the declared output_schema — no "
+    "leading or trailing text, no markdown fences.\n"
+    "After all intermediate tool calls complete, finalise via "
+    "submit_output (preferred) or emit the JSON object and stop. Do not "
+    "re-ask the user for information you already have; populate the "
+    "schema with your best synthesis and cite `low_confidence` in a "
+    "notes field if relevant."
 )
 
 
