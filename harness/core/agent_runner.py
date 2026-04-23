@@ -389,6 +389,28 @@ class AgentRunner:
                 except (json.JSONDecodeError, TypeError):
                     pass
 
+            # Warn loudly when an agent "completes" with nothing usable —
+            # this almost always means the Anthropic-compat vendor returned
+            # prose instead of a submit_output tool_use, or the response
+            # was truncated mid-JSON. Without this log the operator only
+            # sees a downstream gate-fail with no hint at the root cause.
+            _log = logging.getLogger(__name__)
+            if not promoted and not (content_str or "").strip():
+                _log.warning(
+                    "Agent %s completed with empty output (no parsed_output, "
+                    "no content). Likely causes: provider didn't call submit_output, "
+                    "response truncated, or schema mismatch. tool_calls=%s",
+                    agent_id,
+                    [tc.get("name") if isinstance(tc, dict) else str(tc)
+                     for tc in (result.get("tool_calls", []) if isinstance(result, dict) else [])][:5],
+                )
+            elif not promoted and content_str:
+                _log.warning(
+                    "Agent %s completed with raw content but no structured "
+                    "output (JSON parse failed). First 300 chars: %s",
+                    agent_id, content_str[:300],
+                )
+
             wrapper: dict[str, Any] = {
                 "result": result,
                 "run_record": run_record,
