@@ -1085,6 +1085,29 @@ def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, d
         domain_name = domain_cfg.get("name", dp.name)
         industry = industry or domain_cfg.get("industry", "software")
 
+        # Catch common schema mistakes before they cascade into an empty
+        # scanner run. The supported keys are `reference:`, `target:`,
+        # `docs:` — each an array of entries. Typos like `reference_source:`
+        # are silently ignored otherwise, and scanner scans `dp` (empty).
+        _KNOWN_SOURCE_KEYS = {"reference", "target", "docs"}
+        _COMMON_MISTAKES = {
+            "reference_source": "reference",
+            "reference_sources": "reference",
+            "target_source": "target",
+            "target_sources": "target",
+            "doc_sources": "docs",
+            "documents": "docs",
+            "sources": "reference (or target if it's the target code)",
+        }
+        for bad, good in _COMMON_MISTAKES.items():
+            if bad in domain_cfg:
+                click.echo(
+                    f"Warning: domain.yaml uses unsupported key `{bad}:` — "
+                    f"rename to `{good}:` (array of {{path: ...}} entries). "
+                    f"Otherwise scanner runs on an empty source set and produces no output.",
+                    err=True,
+                )
+
         # Build team_config from domain.yaml fields
         team_config: dict[str, Any] = {
             "industry": industry,
