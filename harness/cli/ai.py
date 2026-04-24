@@ -1286,7 +1286,46 @@ def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, d
     # Pass output_dir to ALL steps — AgentBuilderAgent needs it to write files to the right location
     task_input["output_dir"] = str(output_dir)
 
-    genesis_workflow = project_root / "workflows" / "genesis" / "genesis_build.yaml"
+    # Auto-pick workflow: if the RAW domain.yaml had `intent:` without
+    # any of reference/target/docs, route to the prompt-only pipeline.
+    # We check the raw file (not the post-CLI team_config) because the
+    # CLI fills `target` with the domain dir as a fallback — checking
+    # team_config here would always see sources.
+    # Override: domain.yaml may carry `workflow: prompt` or
+    # `workflow: build` for explicit control.
+    tc = task_input.get("team_config", {}) if isinstance(task_input, dict) else {}
+    has_intent = bool(tc.get("intent"))
+    explicit_workflow: str | None = None
+    user_declared_sources = False
+    if domain_path:
+        _dyaml = Path(domain_path) / "domain.yaml"
+        if _dyaml.exists():
+            try:
+                import yaml as _y
+                _dcfg = _y.safe_load(_dyaml.read_text(encoding="utf-8")) or {}
+                _wf = _dcfg.get("workflow")
+                if isinstance(_wf, str):
+                    explicit_workflow = _wf.strip().lower()
+                user_declared_sources = bool(
+                    _dcfg.get("reference") or _dcfg.get("target") or _dcfg.get("docs")
+                )
+            except Exception:
+                explicit_workflow = None
+
+    use_prompt_workflow = (
+        explicit_workflow == "prompt"
+        or (explicit_workflow is None and has_intent and not user_declared_sources)
+    )
+    if use_prompt_workflow:
+        genesis_workflow = project_root / "workflows" / "genesis" / "genesis_prompt.yaml"
+        reason = (
+            "explicit (domain.yaml: workflow: prompt)"
+            if explicit_workflow == "prompt"
+            else "intent set, no sources in domain.yaml"
+        )
+        click.echo(f"  workflow: prompt-only ({reason})")
+    else:
+        genesis_workflow = project_root / "workflows" / "genesis" / "genesis_build.yaml"
 
     if not genesis_workflow.exists():
         click.echo(f"Error: Genesis workflow not found at {genesis_workflow}", err=True)
