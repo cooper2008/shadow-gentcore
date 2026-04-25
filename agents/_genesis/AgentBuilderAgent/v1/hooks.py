@@ -101,6 +101,24 @@ _EXECUTION_MODE_ALIASES: dict[str, str] = {
     "direct": "direct",
 }
 
+_VALID_PRELOAD_SOURCES: frozenset[str] = frozenset({
+    # Mirror the registered names in harness/core/manifest_loader.py::_build_preload_item.
+    # Keep in sync — adding a new source there REQUIRES adding it here too,
+    # otherwise the normalizer will silently strip it from generated manifests.
+    "tool_pack_catalog",
+    "shadow_gentcore_builtin_tools",
+    "domain_context_docs",
+    "shared_stage_catalog",
+    "capabilities_config",
+    "known_mcp_servers",
+    "tool_security_policy",
+    "project_file_tree",
+    "domain_evolution_signals",
+    "best_practices_overlay",
+    "best_practice_library",
+})
+
+
 _ON_FAIL_ALIASES: dict[str, str] = {
     "continue": "degrade",
     "skip": "degrade",
@@ -167,6 +185,138 @@ def _normalize_enums(path: str, content: str) -> str:
                      _on_fail_sub, out, flags=re.MULTILINE)
 
     return out
+
+
+def _normalize_agent_manifest_schema(path: str, content: str) -> str:
+    """Fix two recurring schema drifts in LLM-generated agent manifests.
+
+    Drift 1 — ``constraints:`` emitted as a list of free-form strings.
+       AgentManifest expects a ``ConstraintsConfig`` dict
+       (``allowed_paths``, ``blocked_commands``, ``max_file_changes``,
+       ``max_lines_per_file``, ``require_tests``). When the LLM emits a
+       list, we move the strings to ``metadata.constraint_notes`` (so
+       they're preserved for human readers) and replace ``constraints``
+       with an empty ``{}`` so the schema validates.
+
+    Drift 2 — ``context.preload`` includes invented source names.
+       Only a fixed set of preload sources is registered in
+       ``manifest_loader._build_preload_item``. Names like
+       ``fastapi_patterns`` or ``standards`` silently produce nothing at
+       runtime — the agent loses the context it expected to see. We
+       drop unknown entries (keeping the registered ones) and stash the
+       removed names in ``metadata.dropped_preload_sources`` so the
+       human reader can see what got pruned.
+
+    Applies ONLY to agent_manifest.yaml (filename match) so workflow
+    YAMLs and other docs are untouched. Round-trips through PyYAML —
+    on parse failure the original content passes through unchanged so
+    a malformed manifest still gets written for human inspection.
+    """
+    if not content or not isinstance(content, str):
+        return content
+    if not path.lower().endswith("agent_manifest.yaml"):
+        return content
+
+    try:
+        import yaml as _yaml
+        data = _yaml.safe_load(content)
+    except Exception:
+        return content
+    if not isinstance(data, dict):
+        return content
+
+    changed = False
+
+    # --- Drift 1: constraints as list ---
+    constraints = data.get("constraints")
+    if isinstance(constraints, list):
+        notes = [str(c) for c in constraints if c is not None]
+        meta = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        if not isinstance(meta, dict):
+            meta = {}
+        meta.setdefault("constraint_notes", []).extend(notes)
+        data["metadata"] = meta
+        data["constraints"] = {}
+        changed = True
+
+    # --- Drift 2: invalid context.preload entries ---
+    ctx = data.get("context")
+    if isinstance(ctx, dict):
+        preload = ctx.get("preload")
+        if isinstance(preload, list):
+            kept = [p for p in preload if isinstance(p, str) and p in _VALID_PRELOAD_SOURCES]
+            dropped = [p for p in preload if isinstance(p, str) and p not in _VALID_PRELOAD_SOURCES]
+            if dropped:
+                ctx["preload"] = kept
+                meta = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+                if not isinstance(meta, dict):
+                    meta = {}
+                meta.setdefault("dropped_preload_sources", []).extend(dropped)
+                data["metadata"] = meta
+                changed = True
+
+    if not changed:
+        return content
+    try:
+        return _yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
+    except Exception:
+        return content
+
+
+def _normalize_domain_manifest_schema(path: str, content: str) -> str:
+    """Fix the recurring DomainManifest drift in genesis output.
+
+    Drift — ``workflows:`` emitted as a list of file paths.
+       DomainManifest.workflows expects an Optional[WorkflowsConfig] dict
+       (with ``processes: [...]`` inside). When the LLM emits a list of
+       paths, we convert the path-stripped basenames into
+       ``workflows.processes``. The original list is preserved at
+       ``metadata.declared_workflow_files`` so human readers can see
+       what genesis intended.
+
+    Applies ONLY to ``domain.yaml``. Round-trips through PyYAML — on
+    parse failure the original content passes through unchanged.
+    """
+    if not content or not isinstance(content, str):
+        return content
+    if not path.lower().endswith("domain.yaml"):
+        return content
+    try:
+        import yaml as _yaml
+        data = _yaml.safe_load(content)
+    except Exception:
+        return content
+    if not isinstance(data, dict):
+        return content
+
+    workflows = data.get("workflows")
+    if not isinstance(workflows, list):
+        return content
+
+    process_names: list[str] = []
+    for entry in workflows:
+        if not isinstance(entry, str):
+            continue
+        # strip "workflows/" prefix and ".yaml"/".yml" suffix
+        base = entry
+        if "/" in base:
+            base = base.rsplit("/", 1)[1]
+        for suffix in (".yaml", ".yml"):
+            if base.endswith(suffix):
+                base = base[: -len(suffix)]
+        process_names.append(base)
+
+    meta = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+    if not isinstance(meta, dict):
+        meta = {}
+    meta.setdefault("declared_workflow_files", []).extend(workflows)
+    data["metadata"] = meta
+    data["workflows"] = {"processes": process_names}
+
+    try:
+        return _yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
+    except Exception:
+        return content
 
 
 def _resolve_files_from_result(result: Any) -> list[dict[str, Any]]:
@@ -246,6 +396,8 @@ def post_execute(manifest: Any, task: Any, result: Any) -> Any:
             p = out_root / p
         try:
             content = _normalize_enums(raw_path, content)
+            content = _normalize_agent_manifest_schema(raw_path, content)
+            content = _normalize_domain_manifest_schema(raw_path, content)
             rel = str(p.relative_to(out_root)) if str(p).startswith(str(out_root)) else str(p)
 
             # Regen-safety check: if file already exists AND its current

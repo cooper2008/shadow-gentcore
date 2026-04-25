@@ -65,7 +65,28 @@ For each `{AgentName}` in the roster, emit exactly these three files:
   - Tune `trigger_token_estimate` to ~50-60% of the model's context window. Single-shot agents (`direct`, `chain_of_thought` without tools) don't need compaction — omit the block to keep manifests slim.
 - `tools`: from architect's `tool_assignments` for this agent
 - `context`: `{preload: [best_practices_overlay]}` — emit this block on EVERY generated agent. The `best_practices_overlay` preload source reads `context/best_practices.md` at runtime (Tier 1.5) and injects it alongside standards.md. The file may not exist — the preload is a no-op in that case, so adding it is always safe. Extend the list with domain-specific preload sources when architect flags them, but never drop `best_practices_overlay`.
-- `constraints`, `permissions`: from architect's spec
+- `constraints`: MUST be a dict (`ConstraintsConfig`), NEVER a list of free-form strings. Valid keys: `max_file_changes` (int), `max_lines_per_file` (int), `allowed_paths` (list of glob strings), `blocked_commands` (list of strings), `require_tests` (bool). Free-form constraint guidance from the architect spec belongs in `metadata.constraint_notes` (a list of strings), not directly under `constraints`. Example:
+  ```yaml
+  constraints:
+    max_file_changes: 10
+    allowed_paths: ["src/**", "tests/**"]
+    blocked_commands: ["rm -rf", "git push --force"]
+    require_tests: true
+  metadata:
+    constraint_notes:
+      - "Never use synchronous database calls"
+      - "All endpoints must include OpenAPI documentation"
+  ```
+- `permissions`: from architect's spec
+- **`context.preload` valid sources** — emit ONLY names from this list, never invent new ones. Unknown names are silently dropped at load time, so the agent loses context it expected:
+  - `best_practices_overlay` (always include — Tier 1.5 standards delta)
+  - `domain_context_docs` (when the agent reads project docs)
+  - `project_file_tree` (when the agent navigates code)
+  - `tool_pack_catalog`, `shadow_gentcore_builtin_tools`, `shared_stage_catalog` (genesis-only)
+  - `capabilities_config`, `known_mcp_servers`, `tool_security_policy` (genesis-only)
+  - `domain_evolution_signals` (Tier 5 EvolutionAgent only)
+  - `best_practice_library` (BestPracticeAdvisor/Researcher only)
+  Domain-specific names like `fastapi_patterns` or `database_patterns` are NOT registered — never emit them.
 - `input_schema`, `output_schema`: from architect's spec
 - `grading_criteria_ref`: `grading_criteria.yaml`
 - `metadata`: `{author: <team>, tags: [...]}`
