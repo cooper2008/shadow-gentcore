@@ -118,7 +118,15 @@ class MemoryRecallAdapter:
     Arguments:
         agent_id:  string — normally injected by AgentRunner. Required.
         key:       optional — filter to a specific memory key (e.g. "run_output").
-        k:         integer — max entries to return (default 5).
+        k:         integer — max entries to return (default 5, hard cap 50).
+        summary_only: bool — when True, return key+timestamp+200-char excerpt
+                   per entry instead of the default 600-char preview. Use this
+                   when an agent needs a quick scan over many past runs without
+                   spending tokens on full bodies.
+        max_total_chars: integer — cap on combined output across all entries
+                   (default 5000). Per-entry preview shrinks when total would
+                   exceed this. Prevents a high-k recall from blowing past the
+                   model's context window.
         domain_root: optional — override memory root. Defaults to
                    GENTCORE_MEMORY_DIR env var, else `<cwd>/.gentcore/memory`.
 
@@ -126,6 +134,11 @@ class MemoryRecallAdapter:
         stdout:    rendered entries as markdown, newest first, one per block.
         entries_returned: int.
     """
+
+    _K_HARD_CAP = 50
+    _DEFAULT_PREVIEW_CHARS = 600
+    _SUMMARY_PREVIEW_CHARS = 200
+    _DEFAULT_MAX_TOTAL_CHARS = 5000
 
     async def invoke(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -141,6 +154,14 @@ class MemoryRecallAdapter:
             k = int(arguments.get("k", 5))
         except (TypeError, ValueError):
             k = 5
+        # Hard-cap k so a buggy or adversarial caller can't blow the
+        # recall path past the model's context window with k=10000.
+        k = max(1, min(k, self._K_HARD_CAP))
+        summary_only = bool(arguments.get("summary_only", False))
+        try:
+            max_total = int(arguments.get("max_total_chars", self._DEFAULT_MAX_TOTAL_CHARS))
+        except (TypeError, ValueError):
+            max_total = self._DEFAULT_MAX_TOTAL_CHARS
 
         base = (
             arguments.get("memory_root")
@@ -173,6 +194,14 @@ class MemoryRecallAdapter:
 
         # Render newest-first. FileMemoryStore.recall returns [-k:] so entries[-1] is newest.
         import json as _json
+        per_entry_chars = (
+            self._SUMMARY_PREVIEW_CHARS if summary_only else self._DEFAULT_PREVIEW_CHARS
+        )
+        # Auto-shrink per-entry chars when k * per_entry would exceed max_total.
+        # Floors at 100 chars so we never reduce to a useless preview.
+        if len(entries) * per_entry_chars > max_total:
+            per_entry_chars = max(100, max_total // max(len(entries), 1))
+
         lines = [f"[memory_recall] {len(entries)} past entr{'y' if len(entries)==1 else 'ies'} for agent={agent_id}:\n"]
         for entry in reversed(entries):
             ts = entry.get("timestamp")
@@ -184,13 +213,18 @@ class MemoryRecallAdapter:
                 age_days = (_time.time() - ts) / 86400
                 ts_label = f" (seen {age_days:.1f}d ago)"
             val_preview = val if isinstance(val, str) else _json.dumps(val, default=str)
-            lines.append(f"## key=`{key_label}`{ts_label}\n{val_preview[:600]}\n")
+            preview = val_preview[:per_entry_chars]
+            if len(val_preview) > per_entry_chars:
+                preview += f" [+{len(val_preview) - per_entry_chars} chars]"
+            lines.append(f"## key=`{key_label}`{ts_label}\n{preview}\n")
         return {
             "success": True,
             "stdout": "\n---\n".join(lines),
             "stderr": "",
             "exit_code": 0,
             "entries_returned": len(entries),
+            "summary_only": summary_only,
+            "per_entry_chars": per_entry_chars,
         }
 
 
