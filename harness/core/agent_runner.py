@@ -324,6 +324,18 @@ class AgentRunner:
             if "post_execute" in hooks:
                 result = _call_hook_safe(hooks["post_execute"], manifest, task, result)
 
+            # Framework-level file persistence: when manifest.persist_files=True
+            # and the agent emitted a `files: [{path, content}]` array in its
+            # parsed output, write each file to disk under the task's workspace.
+            # This closes the end-to-end loop for code-writing domain agents
+            # (CodeWriter, MigrationAgent, etc.) — without it their structured
+            # output dies in Tier 4 memory and never reaches the user's
+            # filesystem. Genesis Builder's hooks.py runs first and replaces
+            # `files` with `files_created` on success, so it short-circuits
+            # cleanly here.
+            if isinstance(result, dict):
+                self._persist_output_files(manifest, task, result)
+
             _set_state(AgentState.VALIDATING, agent_id)
 
             # Persist result summary to long-term memory (optional)
@@ -612,6 +624,93 @@ class AgentRunner:
         last_result["reflexion_history"] = reflexion_history
         last_result["rounds"] = len(reflexion_history)
         return last_result
+
+    def _persist_output_files(self, manifest: Any, task: Any, result: dict[str, Any]) -> None:
+        """Write any `files: [{path, content}]` array in the agent's output to disk.
+
+        Activated when ``manifest.persist_files`` is True. Looks at
+        ``result["parsed_output"]`` and ``result["output"]`` (in that order)
+        for a list under the ``files`` key. Each entry is written to
+        ``task.workspace_root`` (or ``task.output_dir``, or task.domain_path
+        as fallback). Non-absolute paths are joined; absolute paths inside
+        the workspace pass through; absolute paths outside the workspace
+        are rejected to keep the writer scope-guarded.
+
+        Failures are caught and recorded in
+        ``result["files_persisted"] = {"written": [...], "failed": [...]}``
+        so the workflow gate can see what landed on disk and what didn't.
+        Never raises — the run continues even if persistence fails.
+        """
+        # Gate on manifest flag
+        persist = self._get(manifest, "persist_files", False)
+        if not persist:
+            return
+
+        # Find the files array — pydantic dump puts it on parsed_output
+        files: Any = None
+        for key in ("parsed_output", "output"):
+            container = result.get(key)
+            if isinstance(container, dict):
+                candidate = container.get("files")
+                if isinstance(candidate, list) and candidate:
+                    files = candidate
+                    break
+        if not files:
+            return
+
+        # Resolve target dir
+        from pathlib import Path
+        target_raw: Any = (
+            self._get(task, "workspace_root")
+            or self._get(task, "output_dir")
+            or self._get(task, "domain_path")
+        )
+        if not target_raw:
+            ip = self._get(task, "input_payload")
+            if isinstance(ip, dict):
+                target_raw = ip.get("workspace_root") or ip.get("output_dir") or ip.get("domain_path")
+        if not target_raw:
+            result.setdefault("files_persisted", {}).setdefault("failed", []).append(
+                {"reason": "no workspace_root/output_dir/domain_path on task"}
+            )
+            return
+
+        try:
+            target_root = Path(str(target_raw)).expanduser().resolve()
+        except Exception as exc:
+            result.setdefault("files_persisted", {}).setdefault("failed", []).append(
+                {"reason": f"invalid target_raw: {exc!s}"}
+            )
+            return
+
+        written: list[str] = []
+        failed: list[dict[str, str]] = []
+        for entry in files:
+            if not isinstance(entry, dict):
+                continue
+            raw_path = entry.get("path")
+            content = entry.get("content")
+            if not raw_path or not isinstance(content, str):
+                failed.append({"path": str(raw_path), "reason": "missing path or non-string content"})
+                continue
+            try:
+                p = Path(raw_path)
+                if not p.is_absolute():
+                    p = (target_root / p).resolve()
+                # Scope-guard: absolute paths must stay inside the workspace
+                if not str(p).startswith(str(target_root)):
+                    failed.append({"path": str(raw_path), "reason": "path escapes workspace"})
+                    continue
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(content, encoding="utf-8")
+                written.append(str(p))
+            except Exception as exc:
+                failed.append({"path": str(raw_path), "reason": str(exc)[:200]})
+
+        result.setdefault("files_persisted", {})
+        result["files_persisted"]["written"] = written
+        result["files_persisted"]["failed"] = failed
+        result["files_persisted"]["target_root"] = str(target_root)
 
     @staticmethod
     def _build_critique(graded_contract: Any, output_schema: dict[str, Any] | None = None) -> str:
