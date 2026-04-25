@@ -82,11 +82,12 @@ teams:
 
 ## 2. Run genesis → real domain agents from your codebase
 
-Genesis is a **10-step pipeline** that **reads your repo, docs, and capabilities**, then writes purpose-built agents into your domain repo. The 10-step
-shape is the result of the **Genesis Complexity Upgrade** — no new required
-config keys were introduced; the pipeline simply got smarter about handling
-messy real-world inputs (many reference repos, versioned docs, ambiguous
-ownership).
+Genesis is an **11-step pipeline** that **reads your repo, docs, and capabilities**, then writes purpose-built agents into your domain repo. The 11-step
+shape is the result of the **Genesis Complexity Upgrade** plus the
+**Best-Practice Overlay (Tier 1.5)** — no new required config keys were
+introduced; the pipeline simply got smarter about handling messy real-world
+inputs (many reference repos, versioned docs, ambiguous ownership) and
+catches missing-but-recommended industry standards via the new `advise` step.
 
 ### Dry-run first (zero API cost)
 
@@ -100,18 +101,19 @@ The pipeline runs:
 
 ```
 scan → map → resolve → (discover_tools ∥ engineer_context) → verify
-     → synthesize_tools → architect → build → validate
+     → advise → synthesize_tools → architect → build → validate
 ```
 
 - **SourceScannerAgent** — walks `reference/` + `target/` + `docs/`, builds an inventory. Every extracted standard now carries an `evidence` trail (file, line range, quote) — templated / made-up rules fail the schema.
 - **KnowledgeMapperAgent** — classifies findings and emits a `coverage` score per category plus overall. The `map_gate` blocks the pipeline when coverage is too thin.
-- **ConflictResolverAgent** (NEW) — when multiple reference repos disagree or docs have version suffixes (`v1`, `-old`, `-deprecated`, …), this step arbitrates using a fixed 6-rung tiebreaker ladder (frontmatter supersedes → filename version → mtime → repo role → git recency → fallback: keep both, flag contested). Emits `resolved_knowledge_map` with `source_attribution` on every rule and a `contested_items[]` list. **Zero new config required** — the agent infers priorities from the repos and docs themselves.
+- **ConflictResolverAgent** — when multiple reference repos disagree or docs have version suffixes (`v1`, `-old`, `-deprecated`, …), this step arbitrates using a fixed 6-rung tiebreaker ladder. Emits `resolved_knowledge_map` with `source_attribution` on every rule and a `contested_items[]` list. **Zero new config required** — the agent infers priorities from the repos and docs themselves.
 - **ToolDiscoveryAgent** — picks tool packs matching your stack (FastAPI → `toolpack://core/fastapi`).
 - **ContextEngineerAgent** — generates `context/standards.md` and `context/architecture.md` from the resolved knowledge map.
-- **ContextVerifierAgent** (NEW) — re-reads a sample of cited sources with `file_read` and scores how well the generated docs are grounded in real files (`grounding_score`). Low grounding loops back to `ContextEngineer` with the specific unsupported claims rather than regenerating the whole document.
+- **ContextVerifierAgent** — re-reads a sample of cited sources with `file_read` and scores how well the generated docs are grounded in real files (`grounding_score`). Low grounding loops back to `ContextEngineer` with the specific unsupported claims rather than regenerating the whole document.
+- **BestPracticeAdvisorAgent** (NEW, the `advise` step) — diffs the generated `standards.md` against the curated industry library (`config/best_practices/<industry>.yaml`) and writes a `context/best_practices.md` Tier 1.5 overlay flagging missing-but-recommended principles. The overlay is auto-injected into every generated agent's prompt at runtime via the `best_practices_overlay` preload source. See [BEST_PRACTICES_OVERLAY.md](BEST_PRACTICES_OVERLAY.md).
 - **ToolSynthesizerAgent** — closes tool gaps by wrapping public MCP servers or synthesising new tool packs, subject to a static security scan.
-- **AgentArchitectAgent/v2** (catalog-driven, default since this release) — designs the agent roster + workflow graph with proper **gates + feedback loops**. Coverage-aware gate now requires ≥ 2 roster entries and a valid DAG.
-- **AgentBuilderAgent** — writes every file: `agents/<Name>/v1/{agent_manifest.yaml, system_prompt.md, grading_criteria.yaml}` and `workflows/*.yaml`. Gate requires ≥ 3 files actually written (not just planned).
+- **AgentArchitectAgent/v2** (catalog-driven, default) — designs the agent roster + workflow graph with proper **gates + feedback loops**. Coverage-aware gate now requires ≥ 2 roster entries and a valid DAG.
+- **AgentBuilderAgent** — writes every file: `agents/<Name>/v1/{agent_manifest.yaml, system_prompt.md, grading_criteria.yaml}` and `workflows/*.yaml`. Sets `persist_files: true` on code-writing agents so their generated files reach disk at run time. A post-write normalizer repairs common LLM schema drifts (list-shaped constraints, invented preload names, list-shaped workflow refs). Gate requires ≥ 3 files actually written (not just planned).
 - **QualityGateAgent** — validates the generated artifacts. `validation_passed` must be `true`.
 
 ### When to use which Genesis workflow
@@ -151,23 +153,34 @@ export ANTHROPIC_AUTH_TOKEN=sk-cp-...
 
 ```
 my-backend/
-├── domain.yaml                 # ← YOU wrote this (1 required file)
-├── context/                    # ← generated by ContextEngineerAgent
-│   ├── standards.md            #   injected into every domain-agent prompt
-│   └── architecture.md         #   injected on demand
-├── agents/                     # ← generated by AgentBuilderAgent (catalog-reused or synthesised)
-│   ├── APIFeaturePlannerAgent/v1/
-│   ├── FastAPICodeGenAgent/v1/
-│   ├── PytestRunnerAgent/v1/
-│   ├── CodeReviewerAgent/v1/
-│   └── TriageAgent/v1/         # ← classifies incoming task requests
-└── workflows/                  # ← generated by AgentBuilderAgent, ONE PER TASK TYPE
-    ├── triage.yaml             #   ★ the single /run entry point — dispatches below
-    ├── feature_delivery.yaml   #   plan → implement → test → review
-    ├── bug_fix.yaml            #   reproduce → fix → verify → review
-    ├── refactor.yaml           #   plan → apply → test → review
-    └── docs_refresh.yaml       #   audit → regenerate → review
+├── domain.yaml                  # ← YOU wrote this (1 required file)
+├── .gentcore/
+│   └── genesis-manifest.json    # ← regen-safety hash record — Builder refuses to overwrite hand-edited files unless GENTCORE_FORCE_OVERWRITE=1
+├── context/                     # ← generated by ContextEngineerAgent + BestPracticeAdvisorAgent
+│   ├── standards.md             #   injected into every domain-agent prompt (Tier 1)
+│   ├── best_practices.md        #   ← NEW Tier 1.5 overlay, also auto-injected, flags missing industry standards
+│   ├── architecture.md          #   injected on demand
+│   ├── glossary.md              #   domain vocabulary
+│   └── reference_index.yaml     #   Tier 2 keyword-indexed chunks
+├── agents/                      # ← generated by AgentBuilderAgent (catalog-reused or synthesised)
+│   ├── CodeWriterAgent/v1/      #   persist_files: true — writes generated code to workspace_root
+│   ├── TestRunnerAgent/v1/      #   persist_files: true — writes tests + runs pytest
+│   ├── MigrationAgent/v1/       #   persist_files: true — writes Alembic migrations
+│   ├── ReviewerAgent/v1/
+│   ├── SecurityScanAgent/v1/
+│   └── TriageAgent/v1/          # ← classifies incoming task requests
+└── workflows/                   # ← generated by AgentBuilderAgent, ONE PER TASK TYPE
+    ├── triage.yaml              #   ★ the single /run entry point — dispatches below
+    ├── feature_delivery.yaml    #   plan → implement → test → review
+    ├── bug_fix.yaml             #   reproduce → fix → verify → review
+    ├── refactor.yaml            #   plan → apply → test → review
+    └── security_review.yaml     #   audit → triage → fix → review
 ```
+
+> **Agent name list above is illustrative** — your actual generated set
+> depends on what `AgentArchitectAgent/v2` picked from the `_shared/`
+> catalog (~70% reuse target for SWE domains). Run `ls agents/` after
+> genesis to see your domain's actual roster.
 
 Consumers of the generated service call one endpoint:
 
@@ -332,9 +345,33 @@ Without `--dry-run`, the agent:
 
 ```bash
 ./ai run workflow /path/to/my-backend/workflows/feature_delivery.yaml \
-  --task '{"feature": "Add product search by name and price range"}' \
+  --domain /path/to/my-backend \
+  --task '{
+    "feature_request": "Add product search by name and price range",
+    "branch": "feat/product-search",
+    "workspace_root": "/path/to/working/tree"
+  }' \
   --dry-run
 ```
+
+> **Critical for getting files on disk: `workspace_root` + `persist_files`.**
+>
+> Code-writing agents (CodeWriter, MigrationAgent, TestRunner,
+> RefactorPlanner) emit a structured `files: [{path, content}]` array in
+> their output. The framework writes those files to disk **only when**:
+> 1. The agent's manifest declares `persist_files: true` (the Builder
+>    template does this automatically for code-writing agents post-Q2 2026)
+> 2. The task input includes a `workspace_root` (or `output_dir`)
+>
+> Without both, the agent runs and produces schema-valid output, but the
+> files die in Tier 4 memory and never reach your filesystem. If you
+> upgraded an old domain, check each code-writing agent's manifest for
+> `persist_files: true` — re-run genesis with `GENTCORE_FORCE_OVERWRITE=1`
+> to regenerate, or hand-set the field per agent.
+
+> **Strict-mode for production:** set `GENTCORE_STRICT_MANIFESTS=1` so
+> any manifest schema drift fails fast at load time instead of warning.
+> Recommended for CI and HTTP server startup.
 
 The workflow engine handles:
 
@@ -526,7 +563,7 @@ All these work with `SmokeTestProvider`:
 
 A natural follow-up question: "The genesis agents are also just YAML manifests + prompts. Are they generated by the framework too?"
 
-**Short answer: no. They're bootstrap.** The 8 agents in `shadow-gentcore/agents/_genesis/` (SourceScannerAgent, KnowledgeMapperAgent, ToolDiscoveryAgent, ContextEngineerAgent, AgentArchitectAgent, AgentBuilderAgent, EvolutionAgent, QualityGateAgent) ship pre-built with the SDK because they have to exist before any domain can be created — a chicken-and-egg problem.
+**Short answer: no. They're bootstrap.** The 15 agents in `shadow-gentcore/agents/_genesis/` (SourceScannerAgent, KnowledgeMapperAgent, ConflictResolverAgent, ToolDiscoveryAgent, ContextEngineerAgent, ContextVerifierAgent, BestPracticeResearchAgent, BestPracticeAdvisorAgent, ToolSynthesizerAgent, AgentArchitectAgent, AgentBuilderAgent, QualityGateAgent, DomainPlannerAgent, HouseStyleAgent, EvolutionAgent) ship pre-built with the SDK because they have to exist before any domain can be created — a chicken-and-egg problem.
 
 **But they CAN be improved by the framework itself.** Two paths:
 

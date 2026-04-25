@@ -49,7 +49,7 @@ python3.11 -m venv .venv
 
 ```bash
 cd ~/shadow-gentcore
-.venv/bin/pytest harness/tests/ -q     # should be 1462 passed
+.venv/bin/pytest harness/tests/ -q     # ~2090+ passed
 ```
 
 ---
@@ -114,18 +114,28 @@ Full matrix → [PROVIDER_GUIDE.md](PROVIDER_GUIDE.md).
 ## 6. Run genesis — build your domain's agents
 
 ```bash
+# Path-based (no workspace.yaml registration needed) — recommended:
+./ai genesis build --domain /path/to/my-backend
+
+# Or, if you've registered the team in shadow-gentcore/config/workspace.yaml:
 ./ai genesis build --team my-backend
 ```
 
-What happens (takes 2-5 minutes, costs ~$0.30-3 depending on model):
+What happens (11 steps, takes 5-30 minutes against a real LLM, costs ~$0.30-3 depending on model):
 
-1. **scan** — walks `reference/` and `target/` paths, builds a file inventory
-2. **map** — classifies what it found (models, services, routers, tests)
-3. **discover_tools** — picks tool packs matching your stack (`toolpack://core/fastapi`, etc.)
-4. **engineer_context** — writes `context/standards.md` + `context/architecture.md`
-5. **architect** — designs the agent roster + workflow DAG
-6. **build** — emits every agent manifest, prompt, workflow YAML
-7. **validate** — runs structural checks on the output
+1. **scan** — `SourceScannerAgent` walks `reference/` + `target/` + `docs/`, builds an evidence-tagged file inventory
+2. **map** — `KnowledgeMapperAgent` classifies findings, scores `coverage` per category
+3. **resolve** — `ConflictResolverAgent` arbitrates when reference repos disagree (6-rung tiebreaker ladder)
+4. **discover_tools** — `ToolDiscoveryAgent` picks tool packs matching your stack (`toolpack://core/fastapi`, etc.)
+5. **engineer_context** — `ContextEngineerAgent` writes `context/standards.md` + `context/architecture.md`
+6. **verify** — `ContextVerifierAgent` re-reads cited sources, scores `grounding_score`
+7. **advise** — `BestPracticeAdvisorAgent` writes `context/best_practices.md` (Tier 1.5 overlay) flagging missing-but-recommended industry standards
+8. **synthesize_tools** — `ToolSynthesizerAgent` closes tool gaps with MCP servers / synthesized packs (gated by static security scan)
+9. **architect** — `AgentArchitectAgent/v2` designs the agent roster + workflow DAG with gates and feedback loops
+10. **build** — `AgentBuilderAgent` emits every agent manifest, prompt, grading_criteria, workflow YAML
+11. **validate** — `QualityGateAgent` runs structural checks on the output
+
+> **Strict mode for production:** set `GENTCORE_STRICT_MANIFESTS=1` to fail fast on any manifest schema drift instead of warning. Recommended for CI and HTTP server startup.
 
 ### What genesis just wrote for you
 
@@ -244,8 +254,23 @@ The multi-agent fleet and the self-healing workflow are **already there** — yo
 
 ```bash
 ./ai run workflow ../my-backend/workflows/feature_delivery.yaml \
-  --task '{"feature": "Add product search by name and price range", "acceptance_criteria": ["?q=<name>&min=<num>&max=<num>", "paginated results", "tests cover edge cases"]}'
+  --domain ../my-backend \
+  --task '{
+    "feature_request": "Add product search by name and price range",
+    "branch": "feat/product-search",
+    "workspace_root": "/path/to/your/working/tree",
+    "acceptance_criteria": ["?q=<name>&min=<num>&max=<num>", "paginated results", "tests cover edge cases"]
+  }'
 ```
+
+> **`workspace_root` is required for files to land on disk.** Code-writing
+> agents (CodeWriter, MigrationAgent, TestRunner, RefactorPlanner) emit
+> `files: [{path, content}]` arrays in their structured output. The
+> framework writes those files under `workspace_root` only when the
+> agent's manifest declares `persist_files: true` (Builder defaults this
+> to true for code-writing agents). Without `workspace_root` the agent
+> still runs but its output dies in Tier 4 memory rather than reaching
+> your filesystem.
 
 What you'll see:
 

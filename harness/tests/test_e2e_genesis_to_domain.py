@@ -82,12 +82,11 @@ class TestPhase2GenesisOutputQuality:
             # Schemas
             assert "input_schema" in agent, f"{name} missing input_schema"
             assert "output_schema" in agent, f"{name} missing output_schema"
-            # Harness
-            assert "harness" in agent, f"{name} missing harness config"
-            harness = agent["harness"]
-            assert "gate_condition" in harness, f"{name} harness missing gate_condition"
-            assert "gate_on_fail" in harness, f"{name} harness missing gate_on_fail"
-            assert "grading_threshold" in harness, f"{name} harness missing grading_threshold"
+            # Note: legacy `harness:` block (gate_condition / gate_on_fail /
+            # grading_threshold) is no longer expected on agent manifests.
+            # Gate config lives on the WORKFLOW step (`gate:` block in
+            # workflows/*.yaml). Grading lives in `grading_criteria.yaml`
+            # referenced via `grading_criteria_ref`. Smoke runner aligned.
 
     def test_workflow_has_valid_dag(self):
         design = GENESIS_OUTPUTS["AgentArchitectAgent"]["workflow_design"]

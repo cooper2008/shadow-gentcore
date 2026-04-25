@@ -112,8 +112,15 @@ class TestHealthReport:
         assert report.score == pytest.approx(2.0 / 3.0)
         assert not report.all_healthy
 
-    def test_health_report_detects_missing_harness_fields(self, tmp_path):
-        """Create an agent manifest missing harness fields and check detection."""
+    def test_health_report_detects_missing_required_agent_fields(self, tmp_path):
+        """A bare manifest missing REQUIRED_AGENT_FIELDS should be flagged.
+
+        The legacy `harness:` block (gate_condition / gate_on_fail /
+        grading_threshold) is no longer expected — gate config lives on
+        the workflow step, not the agent. The smoke runner now checks only
+        REQUIRED_AGENT_FIELDS (permissions, constraints, input_schema,
+        output_schema, tools).
+        """
         runner = SmokeRunner(project_root=PROJECT_ROOT)
         domain_dir = tmp_path / "bad-domain"
         _scaffold_domain(domain_dir, "bad")
@@ -123,7 +130,7 @@ class TestHealthReport:
         (agent_dir / "agent_manifest.yaml").write_text(yaml.dump({
             "id": "bad/BadAgent/v1",
             "name": "BadAgent",
-            # Missing: permissions, constraints, input_schema, output_schema, tools, harness
+            # Missing: permissions, constraints, input_schema, output_schema, tools
         }))
         (agent_dir / "system_prompt.md").write_text("You are BadAgent.")
         (agent_dir / "grading_criteria.yaml").write_text(yaml.dump({"criteria": []}))
@@ -131,8 +138,14 @@ class TestHealthReport:
         health = runner.validate_domain_health(domain_dir)
         bad_agent = next(a for a in health.agents if a.name == "BadAgent")
         assert not bad_agent.healthy
-        assert any("permissions" in i for i in bad_agent.issues)
-        assert any("harness" in i.lower() for i in bad_agent.issues)
+        # Each REQUIRED_AGENT_FIELD missing should produce an issue
+        for fld in ("permissions", "constraints", "input_schema", "output_schema", "tools"):
+            assert any(fld in i for i in bad_agent.issues), f"missing-{fld} issue not flagged"
+        # And the stale `harness` check must NOT fire — that was the regression
+        # the smoke runner used to produce on every legitimately-generated agent
+        assert not any("harness" in i.lower() for i in bad_agent.issues), (
+            "smoke runner should no longer flag missing 'harness' block — see smoke_runner.py REQUIRED_AGENT_FIELDS comment"
+        )
 
     def test_health_report_detects_missing_stage_agents(self, tmp_path):
         """Workflows referencing nonexistent _shared/ agents should be flagged."""

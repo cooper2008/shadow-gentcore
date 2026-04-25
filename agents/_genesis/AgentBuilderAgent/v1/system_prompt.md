@@ -78,6 +78,7 @@ For each `{AgentName}` in the roster, emit exactly these three files:
       - "All endpoints must include OpenAPI documentation"
   ```
 - `permissions`: from architect's spec
+- `persist_files`: emit `persist_files: true` (top-level field) for any agent whose `output_schema` declares a `files: [{path, content}]` array — typically CodeWriter, MigrationAgent, RefactorPlanner, TestRunner, or any agent that produces files for the user's filesystem. Without this flag the framework only persists a 2KB Tier 4 memory snippet — the agent's structured output never reaches disk and the workflow run produces zero on-disk artifacts. Default omit (False) for review/analysis agents whose output is summary-only.
 - **`context.preload` valid sources** — emit ONLY names from this list, never invent new ones. Unknown names are silently dropped at load time, so the agent loses context it expected:
   - `best_practices_overlay` (always include — Tier 1.5 standards delta)
   - `domain_context_docs` (when the agent reads project docs)

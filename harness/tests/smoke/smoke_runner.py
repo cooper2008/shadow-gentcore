@@ -104,13 +104,19 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-REQUIRED_HARNESS_FIELDS = [
-    "gate_condition", "gate_on_fail", "grading_threshold",
-]
-
 REQUIRED_AGENT_FIELDS = [
     "permissions", "constraints", "input_schema", "output_schema", "tools",
 ]
+
+# Note: the legacy `harness:` block (gate_condition / gate_on_fail /
+# grading_threshold) is NOT a real schema requirement. AgentManifest does
+# not declare it; the runtime never reads it. Gate config lives on the
+# WORKFLOW step (`gate:` block in workflows/*.yaml), not the agent.
+# Grading lives in the agent's `grading_criteria.yaml` referenced via
+# `grading_criteria_ref`. The previous REQUIRED_HARNESS_FIELDS check was
+# stale spec residue and has been removed — it produced false-positive
+# "Missing harness config entirely" issues on every legitimately-generated
+# agent.
 
 
 def _scaffold_domain(domain_dir: Path, name: str = "smoke_domain") -> None:
@@ -533,14 +539,6 @@ class SmokeRunner:
                 if fld not in data:
                     issues.append(f"{agent_name}: missing {fld}")
 
-            harness = data.get("harness", {})
-            if not harness:
-                issues.append(f"{agent_name}: missing harness config entirely")
-            else:
-                for fld in REQUIRED_HARNESS_FIELDS:
-                    if fld not in harness:
-                        issues.append(f"{agent_name}: harness missing {fld}")
-
             # Check tools have pack refs
             tools = data.get("tools", [])
             for tool in tools:
@@ -550,7 +548,7 @@ class SmokeRunner:
         if issues:
             return StepResult(
                 "harness_completeness", False,
-                f"{len(issues)} harness issues across {agent_count} agents",
+                f"{len(issues)} agent-manifest issues across {agent_count} agents",
                 detail="; ".join(issues[:5]),
             )
         return StepResult("harness_completeness", True, f"{agent_count} agents fully configured")
@@ -817,14 +815,6 @@ class SmokeRunner:
         for fld in REQUIRED_AGENT_FIELDS:
             if fld not in data:
                 health.issues.append(f"Missing {fld}")
-
-        harness = data.get("harness", {})
-        if not harness:
-            health.issues.append("Missing harness config entirely")
-        else:
-            for fld in REQUIRED_HARNESS_FIELDS:
-                if fld not in harness:
-                    health.issues.append(f"Harness missing {fld}")
 
         tools = data.get("tools", [])
         for tool in tools:
