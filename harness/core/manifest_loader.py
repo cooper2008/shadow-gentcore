@@ -38,6 +38,35 @@ def _architect_v2_enabled() -> bool:
     return raw not in ("0", "false", "no", "off")
 
 
+_STRICT_MANIFESTS_ENV = "GENTCORE_STRICT_MANIFESTS"
+
+
+def _strict_manifests_enabled() -> bool:
+    """When True, manifest validation failures raise instead of warning.
+
+    Default OFF preserves backward compatibility — existing dev domains
+    with looser manifests keep loading. Set ``GENTCORE_STRICT_MANIFESTS=1``
+    in CI / production startup so invalid manifests fail-fast at boot
+    rather than producing partially-broken agents at runtime.
+    """
+    return str(os.environ.get(_STRICT_MANIFESTS_ENV, "")).strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _emit_manifest_validation_failure(kind: str, path: Any, exc: Exception) -> None:
+    """Single emit-or-raise dispatcher for manifest validation failures.
+
+    ``kind`` is one of ``domain``, ``agent``, ``workflow``. The strict-mode
+    flag turns warnings into ``ValueError``s with ``path`` and the underlying
+    exception preserved as the ``__cause__``.
+    """
+    msg = f"{kind.capitalize()} manifest validation failed for {path}: {exc}"
+    if _strict_manifests_enabled():
+        raise ValueError(msg) from exc
+    warnings.warn(msg, stacklevel=3)
+
+
 def build_memory_store(domain_root: Path) -> Any | None:
     """Build the Tier 4 FileMemoryStore for a domain.
 
@@ -653,7 +682,7 @@ class ManifestLoader:
             from agent_contracts.manifests.domain_manifest import DomainManifest
             DomainManifest.model_validate(data)
         except Exception as exc:
-            warnings.warn(f"Domain manifest validation warning for {yaml_file}: {exc}", stacklevel=2)
+            _emit_manifest_validation_failure("domain", yaml_file, exc)
         return data
 
     @staticmethod
@@ -707,7 +736,7 @@ class ManifestLoader:
             from agent_contracts.manifests.agent_manifest import AgentManifest
             AgentManifest.model_validate(manifest)
         except Exception as exc:
-            warnings.warn(f"Agent manifest validation warning for {agent_dir}: {exc}", stacklevel=2)
+            _emit_manifest_validation_failure("agent", agent_dir, exc)
 
         # Resolve system_prompt_ref
         system_prompt = ""
@@ -787,7 +816,7 @@ class ManifestLoader:
             from agent_contracts.manifests.workflow_def import WorkflowDefinition
             WorkflowDefinition.model_validate(data)
         except Exception as exc:
-            warnings.warn(f"Workflow manifest validation warning for {workflow_path}: {exc}", stacklevel=2)
+            _emit_manifest_validation_failure("workflow", workflow_path, exc)
         return _swap_architect_v1_to_v2(data)
 
     def build_step_configs(
