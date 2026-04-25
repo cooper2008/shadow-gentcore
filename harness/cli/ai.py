@@ -529,8 +529,7 @@ def run_agent(agent_id: str, task: str, domain_path: str, dry_run: bool, output_
     """
     from harness.core.manifest_loader import ManifestLoader
     from harness.core.agent_runner import AgentRunner
-    from harness.core.tool_executor import ToolExecutor
-    from harness.tools.builtin import register_builtins
+    from harness.core.runtime_factory import build_runtime
     from agent_contracts.contracts.task_envelope import TaskEnvelope
 
     loader = ManifestLoader()
@@ -565,13 +564,14 @@ def run_agent(agent_id: str, task: str, domain_path: str, dry_run: bool, output_
     )
 
     provider = _make_provider(dry_run)
-    tool_executor = ToolExecutor()
-    register_builtins(tool_executor)
-    from harness.core.manifest_loader import build_memory_store
+    # build_runtime wires RuleEngine into ToolExecutor — historically the
+    # CLI single-agent path constructed a bare ToolExecutor() and bypassed
+    # Layer 2-6 rule enforcement. boot_engine (workflow path) was already safe.
+    runtime = build_runtime(domain_root)
     runner = AgentRunner(
         provider=provider,
-        tool_executor=tool_executor,
-        memory_store=build_memory_store(domain_root),
+        tool_executor=runtime.tool_executor,
+        memory_store=runtime.memory_store,
     )
 
     task_envelope = TaskEnvelope(

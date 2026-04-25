@@ -199,8 +199,7 @@ async def run_agent(
     """Run a single agent and return its result dict."""
     from agent_contracts.contracts.task_envelope import TaskEnvelope
     from harness.core.agent_runner import AgentRunner
-    from harness.core.tool_executor import ToolExecutor
-    from harness.tools.builtin import register_builtins
+    from harness.core.runtime_factory import build_runtime
 
     if isinstance(task, str):
         task_input = {"instruction": task}
@@ -225,13 +224,14 @@ async def run_agent(
             agent_dir, domain_root, domain_manifest
         )
 
-        tool_executor = ToolExecutor()
-        register_builtins(tool_executor)
-        from harness.core.manifest_loader import build_memory_store
+        # build_runtime guarantees RuleEngine is wired into ToolExecutor —
+        # the HTTP single-agent path historically constructed a bare
+        # ToolExecutor() and silently bypassed Layer 2-6 enforcement.
+        runtime = build_runtime(domain_root)
         runner = AgentRunner(
             provider=provider,
-            tool_executor=tool_executor,
-            memory_store=build_memory_store(domain_root),
+            tool_executor=runtime.tool_executor,
+            memory_store=runtime.memory_store,
         )
 
         task_envelope = TaskEnvelope(
