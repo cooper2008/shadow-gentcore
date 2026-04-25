@@ -12,10 +12,70 @@ Anthropic-compat endpoints and cuts Builder wall-clock from 20+ min
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
+
+
+_GENESIS_MANIFEST_NAME = ".gentcore/genesis-manifest.json"
+
+
+def _sha256(text: str) -> str:
+    """SHA-256 of UTF-8 encoded text. Used to detect post-genesis hand edits."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _genesis_manifest_path(out_root: Path) -> Path:
+    return out_root / _GENESIS_MANIFEST_NAME
+
+
+def _load_genesis_manifest(path: Path) -> dict[str, Any]:
+    """Load the per-domain genesis hash manifest. Returns empty dict on first run / read error."""
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_genesis_manifest(path: Path, data: dict[str, Any]) -> None:
+    """Persist the genesis hash manifest. Writes are best-effort — failure
+    falls through silently so a transient I/O glitch never crashes the
+    build. The manifest is advisory: a missing or corrupt manifest only
+    means the next run will treat existing files as freshly generated.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _force_overwrite_enabled(task: Any) -> bool:
+    """Three opt-in channels for force-overwriting hand-edited generated files:
+
+    1. Env var ``GENTCORE_FORCE_OVERWRITE=1`` — handy for one-shot CLI runs.
+    2. ``task.force_overwrite=True`` — top-level flag (workflow steps can pass it).
+    3. ``task.input_payload.force_overwrite=True`` — deeper variant.
+
+    Default is False — generated files that have been hand-edited since the
+    last genesis are SKIPPED, not overwritten. This is the regen-safety
+    contract: re-running ``./ai genesis build`` on a customized domain no
+    longer silently destroys the user's edits.
+    """
+    if str(os.environ.get("GENTCORE_FORCE_OVERWRITE", "")).lower() in ("1", "true", "yes", "on"):
+        return True
+    if isinstance(task, dict):
+        if task.get("force_overwrite") is True:
+            return True
+        ip = task.get("input_payload")
+        if isinstance(ip, dict) and ip.get("force_overwrite") is True:
+            return True
+    return False
 
 
 _EXECUTION_MODE_ALIASES: dict[str, str] = {
@@ -157,8 +217,18 @@ def post_execute(manifest: Any, task: Any, result: Any) -> Any:
     output_dir = _resolve_output_dir(task)
     out_root = Path(output_dir).expanduser().resolve()
 
+    # Regen-safety: load the per-domain genesis hash manifest. We use it to
+    # detect files the user has hand-edited since the last `genesis build`
+    # and skip them by default. Set GENTCORE_FORCE_OVERWRITE=1 (or pass
+    # force_overwrite=True on the task) to override.
+    genesis_manifest_path = _genesis_manifest_path(out_root)
+    genesis_manifest = _load_genesis_manifest(genesis_manifest_path)
+    force_overwrite = _force_overwrite_enabled(task)
+    now = time.time()
+
     written: list[str] = []
     failed: list[dict[str, str]] = []
+    skipped_user_modified: list[dict[str, str]] = []
     agents_created: set[str] = set()
     workflows_created: list[str] = []
 
@@ -175,14 +245,35 @@ def post_execute(manifest: Any, task: Any, result: Any) -> Any:
         if not p.is_absolute():
             p = out_root / p
         try:
-            # Normalize enum mis-emissions (execution_mode, on_fail) before
-            # writing. Keeps generated domains passing ./ai validate even
-            # when the LLM slipped `reasoning` / `continue` through.
             content = _normalize_enums(raw_path, content)
+            rel = str(p.relative_to(out_root)) if str(p).startswith(str(out_root)) else str(p)
+
+            # Regen-safety check: if file already exists AND its current
+            # hash differs from the last-genesis hash we recorded, the user
+            # has edited it. Skip unless force_overwrite is on.
+            if p.exists() and not force_overwrite:
+                prior_record = genesis_manifest.get(rel)
+                if isinstance(prior_record, dict):
+                    prior_hash = prior_record.get("hash")
+                    if prior_hash:
+                        try:
+                            current_hash = _sha256(p.read_text(encoding="utf-8"))
+                        except (OSError, UnicodeDecodeError):
+                            current_hash = None
+                        if current_hash and current_hash != prior_hash:
+                            skipped_user_modified.append({
+                                "path": rel,
+                                "reason": "file modified since last genesis (set GENTCORE_FORCE_OVERWRITE=1 to override)",
+                            })
+                            continue
+
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content, encoding="utf-8")
             written.append(str(p))
-            rel = str(p.relative_to(out_root)) if str(p).startswith(str(out_root)) else str(p)
+            # Record the hash of what we just wrote so the next genesis run
+            # can tell whether the user has hand-edited the file.
+            genesis_manifest[rel] = {"hash": _sha256(content), "generated_at": now}
+
             # Classify: agents/<Name>/v1/... ; workflows/<name>.yaml
             parts = rel.split(os.sep)
             if len(parts) >= 2 and parts[0] == "agents":
@@ -192,21 +283,31 @@ def post_execute(manifest: Any, task: Any, result: Any) -> Any:
         except Exception as exc:
             failed.append({"path": str(raw_path), "error": str(exc)[:200]})
 
+    # Persist the updated genesis manifest. Best-effort — _save's OSError
+    # swallow ensures a transient I/O glitch never crashes the build.
+    if written:
+        _save_genesis_manifest(genesis_manifest_path, genesis_manifest)
+
     files_planned = len(files)
     files_written = len(written)
-    completion_pct = (files_written / files_planned * 100) if files_planned else 0
+    files_skipped = len(skipped_user_modified)
+    # Treat regen-skips as completed for gate purposes — the user EXPLICITLY
+    # owns those files now, so the build is "done" with respect to them.
+    # Genuine failures (failed list) still count against completion.
+    files_completed = files_written + files_skipped
+    completion_pct = (files_completed / files_planned * 100) if files_planned else 0
 
-    # Build the schema-compliant output the gate expects. We preserve the
-    # original LLM output under `_raw` in case callers need it.
     enriched_output: dict[str, Any] = {
         "domain_dir": str(out_root),
         "files_created": written,
         "files_failed": failed,
+        "files_skipped_user_modified": skipped_user_modified,
         "agents_created": sorted(agents_created),
         "workflows_created": workflows_created,
         "build_quality": {
             "files_planned": files_planned,
             "files_written": files_written,
+            "files_skipped_user_modified": files_skipped,
             "completion_pct": completion_pct,
         },
     }
