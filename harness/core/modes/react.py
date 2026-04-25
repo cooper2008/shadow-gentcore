@@ -38,6 +38,148 @@ def _satisfies_schema_shape(text: str, schema: dict | None) -> bool:
     return True
 
 
+def _estimate_message_tokens(messages: list[dict[str, Any]]) -> int:
+    """Cheap chars/4 estimate of total tokens across a message list.
+
+    Mirrors the heuristic used in ContextEngine — accurate enough to drive
+    a compaction trigger without pulling in a tokenizer dependency.
+    """
+    total = 0
+    for m in messages:
+        c = m.get("content", "")
+        if isinstance(c, list):
+            for block in c:
+                if not isinstance(block, dict):
+                    continue
+                txt = block.get("text") or block.get("content") or ""
+                inp = block.get("input")
+                total += len(str(txt)) // 4
+                if inp:
+                    total += len(str(inp)) // 4
+        else:
+            total += len(str(c)) // 4
+    return total
+
+
+def _serialize_messages_for_summary(messages: list[dict[str, Any]]) -> str:
+    """Render a message list as plain text the summarizer can read.
+
+    Tool results are truncated per-block to keep the summary prompt itself
+    bounded — the whole point is that this slice is too big to ship raw.
+    """
+    lines: list[str] = []
+    for m in messages:
+        role = m.get("role", "?")
+        content = m.get("content", "")
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "text":
+                    lines.append(f"[{role}:text] {str(block.get('text', ''))[:1500]}")
+                elif btype == "tool_use":
+                    args = block.get("input", {})
+                    arg_keys = list(args.keys()) if isinstance(args, dict) else str(args)[:200]
+                    lines.append(f"[{role}:tool_use] {block.get('name', '?')}({arg_keys})")
+                elif btype == "tool_result":
+                    out = str(block.get("content", ""))[:600]
+                    lines.append(f"[{role}:tool_result] {out}")
+        else:
+            lines.append(f"[{role}] {str(content)[:1500]}")
+    return "\n".join(lines)
+
+
+async def _compact_message_history(
+    messages: list[dict[str, Any]],
+    provider: Any,
+    keep_last_n_rounds: int,
+    strategy: str,
+) -> list[dict[str, Any]]:
+    """Compact ``messages`` in place-of, returning a new list.
+
+    Layout assumed (matches ReActStrategy below):
+      [0]: user (initial task)
+      [1]: assistant (step 0 — text + tool_use)
+      [2]: user (step 0 — tool_result)
+      [3]: assistant (step 1)
+      [4]: user (step 1 — tool_result)
+      ...
+
+    A "round" is one (assistant, tool_result) pair = 2 messages. We keep the
+    head (initial task) and the last ``keep_last_n_rounds`` rounds intact;
+    everything between is summarized into a single synthetic user message
+    that's prepended with the original task. The summary message replaces
+    head + middle so we don't end up with two consecutive user roles.
+
+    Strategy:
+      - 'summarize_oldest': call provider.chat with a brief summarization prompt.
+      - 'drop_oldest':       drop the middle entirely with a "[N steps elided]" marker.
+      - 'none':              return messages unchanged.
+
+    Returns ``messages`` unchanged when there's nothing to compact or when
+    summarization fails (fail-open keeps the loop running).
+    """
+    if strategy == "none":
+        return messages
+    keep_msgs = 2 * keep_last_n_rounds
+    if len(messages) < keep_msgs + 3:
+        return messages
+    head_msg = messages[0]
+    tail = messages[-keep_msgs:]
+    middle = messages[1:-keep_msgs]
+    if not middle:
+        return messages
+
+    head_content = head_msg.get("content", "")
+    if isinstance(head_content, list):
+        head_content = "\n".join(
+            str(b.get("text", "")) for b in head_content if isinstance(b, dict)
+        )
+
+    if strategy == "drop_oldest":
+        synthetic = {
+            "role": "user",
+            "content": (
+                f"{head_content}\n\n"
+                f"[Auto-compacted: {len(middle)} prior messages elided to fit context budget. "
+                "Continue from your last observation.]"
+            ),
+        }
+        return [synthetic] + tail
+
+    middle_text = _serialize_messages_for_summary(middle)
+    summary_prompt = [{
+        "role": "user",
+        "content": (
+            "You are a conversation compactor. Below is the message history of an AI "
+            "agent's tool-using execution. Produce a concise summary (≤300 words) that "
+            "preserves: (1) tool calls made and their KEY findings, (2) decisions and "
+            "facts established, (3) any open questions. Skip raw tool output verbatim — "
+            "extract the signal.\n\n---\n"
+            f"{middle_text}\n---"
+        ),
+    }]
+    try:
+        resp = await provider.chat(summary_prompt)
+    except Exception:
+        return messages
+    summary_text = str(_resp_get(resp, "content", "")).strip()
+    if not summary_text:
+        return messages
+    synthetic = {
+        "role": "user",
+        "content": (
+            f"{head_content}\n\n"
+            f"[Auto-compacted summary of {len(middle)} prior messages — "
+            "context budget hit, full history elided]\n"
+            f"{summary_text}\n\n"
+            "Continue your work from your last observation."
+        ),
+    }
+    return [synthetic] + tail
+
+
 def _build_anthropic_tools(
     tool_executor: Any,
     allowed: list[Any] | None = None,
@@ -205,8 +347,30 @@ class ReActStrategy(ExecutionStrategy):
     4. Repeat until LLM produces final answer or max_steps reached
     """
 
-    def __init__(self, max_steps: int = 10, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        max_steps: int = 10,
+        compaction: dict[str, Any] | Any | None = None,
+        **kwargs: Any,
+    ) -> None:
         self.max_steps = max_steps
+        # Compaction may arrive as a dict (model_dump'd from manifest) or a
+        # CompactionConfig pydantic model. Normalize to plain attrs so we
+        # don't depend on agent_contracts import here.
+        if compaction is None:
+            self._compaction_strategy = "summarize_oldest"
+            self._compaction_keep_last = 2
+            self._compaction_trigger: int | None = None
+        elif isinstance(compaction, dict):
+            self._compaction_strategy = compaction.get("strategy", "summarize_oldest")
+            self._compaction_keep_last = int(compaction.get("keep_last_n_turns", 2))
+            trig = compaction.get("trigger_token_estimate")
+            self._compaction_trigger = int(trig) if trig else None
+        else:
+            self._compaction_strategy = getattr(compaction, "strategy", "summarize_oldest")
+            self._compaction_keep_last = int(getattr(compaction, "keep_last_n_turns", 2))
+            trig = getattr(compaction, "trigger_token_estimate", None)
+            self._compaction_trigger = int(trig) if trig else None
 
     @property
     def name(self) -> str:
@@ -366,6 +530,37 @@ class ReActStrategy(ExecutionStrategy):
                         "output": result.get("output", ""),
                     })
             current_messages.append({"role": "user", "content": tool_results})
+
+            # Mid-run compaction — only fire when explicitly enabled (trigger
+            # set on the manifest's execution_mode.compaction). Default trigger
+            # is None → no behavior change for existing agents. We check after
+            # appending observations so the budget reflects what the NEXT step
+            # would have to send.
+            if (
+                self._compaction_trigger
+                and step_num + 1 < self.max_steps
+                and self._compaction_strategy != "none"
+            ):
+                est = _estimate_message_tokens(current_messages)
+                if est > self._compaction_trigger:
+                    before = len(current_messages)
+                    current_messages = await _compact_message_history(
+                        current_messages,
+                        provider=provider,
+                        keep_last_n_rounds=self._compaction_keep_last,
+                        strategy=self._compaction_strategy,
+                    )
+                    after = len(current_messages)
+                    if after < before:
+                        steps.append({
+                            "step": step_num + 1,
+                            "type": "compaction",
+                            "strategy": self._compaction_strategy,
+                            "messages_before": before,
+                            "messages_after": after,
+                            "estimated_tokens_before": est,
+                            "estimated_tokens_after": _estimate_message_tokens(current_messages),
+                        })
 
         # Max steps reached — force one final LLM call WITHOUT tools to get summary
         if output_schema:

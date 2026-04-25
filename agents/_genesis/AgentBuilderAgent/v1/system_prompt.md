@@ -52,6 +52,17 @@ For each `{AgentName}` in the roster, emit exactly these three files:
 - `description`: short purpose
 - `system_prompt_ref`: `system_prompt.md`
 - `execution_mode`: `{primary: <mode>, ...}` — `<mode>` MUST be one of the six framework-supported strategies, exactly: `react`, `chain_of_thought`, `plan_execute`, `self_ask`, `tree_of_thought`, `direct`. Never use the architect's `category` label here. If the architect spec suggests `reasoning`, map to `chain_of_thought`. If it suggests `fast-codegen`, map to `direct` (single-shot) or `react` (if the agent calls tools). The schema validator rejects any other value.
+  - **Always include a `compaction` block when `primary` is `react` or `plan_execute`** — these strategies accumulate tool observations across steps and will eventually overflow the context window without compaction. Default block:
+    ```yaml
+    execution_mode:
+      primary: react
+      max_react_steps: 10
+      compaction:
+        strategy: summarize_oldest      # or 'drop_oldest' for cheap, 'none' to disable
+        keep_last_n_turns: 2            # keep last 2 react rounds verbatim
+        trigger_token_estimate: 60000   # compact when message-history estimate exceeds this
+    ```
+  - Tune `trigger_token_estimate` to ~50-60% of the model's context window. Single-shot agents (`direct`, `chain_of_thought` without tools) don't need compaction — omit the block to keep manifests slim.
 - `tools`: from architect's `tool_assignments` for this agent
 - `context`: `{preload: [best_practices_overlay]}` — emit this block on EVERY generated agent. The `best_practices_overlay` preload source reads `context/best_practices.md` at runtime (Tier 1.5) and injects it alongside standards.md. The file may not exist — the preload is a no-op in that case, so adding it is always safe. Extend the list with domain-specific preload sources when architect flags them, but never drop `best_practices_overlay`.
 - `constraints`, `permissions`: from architect's spec
