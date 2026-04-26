@@ -165,6 +165,59 @@ context:
         assert parsed["metadata"]["dropped_preload_sources"] == ["standards"]
 
 
+class TestPermissionsNormalization:
+    def test_missing_permissions_added_for_code_agent(self) -> None:
+        """Code-writing agents get file_edit:allow + shell_command:allow defaults."""
+        manifest_yaml = """
+id: test/CodeWriter/v1
+domain: test
+category: codegen
+system_prompt_ref: system_prompt.md
+"""
+        out = HOOKS._normalize_agent_manifest_schema(
+            "agents/CodeWriter/v1/agent_manifest.yaml", manifest_yaml
+        )
+        parsed = yaml.safe_load(out)
+        assert parsed["permissions"]["file_edit"] == "allow"
+        assert parsed["permissions"]["shell_command"] == "allow"
+        assert parsed["permissions"]["external_api"] == "deny"
+
+    def test_missing_permissions_added_for_review_agent(self) -> None:
+        """Review/analysis agents get safer defaults (file_edit:deny)."""
+        manifest_yaml = """
+id: test/Reviewer/v1
+domain: test
+category: reasoning
+system_prompt_ref: system_prompt.md
+"""
+        out = HOOKS._normalize_agent_manifest_schema(
+            "agents/Reviewer/v1/agent_manifest.yaml", manifest_yaml
+        )
+        parsed = yaml.safe_load(out)
+        assert parsed["permissions"]["file_edit"] == "deny"
+        assert parsed["permissions"]["shell_command"] == "ask"
+
+    def test_existing_permissions_left_alone(self) -> None:
+        """If the LLM already emitted a permissions block, normalizer must not overwrite."""
+        manifest_yaml = """
+id: test/Custom/v1
+domain: test
+category: codegen
+system_prompt_ref: system_prompt.md
+permissions:
+  file_edit: ask
+  shell_command: deny
+  external_api: allow
+  browser: allow
+"""
+        out = HOOKS._normalize_agent_manifest_schema(
+            "agents/Custom/v1/agent_manifest.yaml", manifest_yaml
+        )
+        parsed = yaml.safe_load(out)
+        assert parsed["permissions"]["file_edit"] == "ask"
+        assert parsed["permissions"]["external_api"] == "allow"
+
+
 class TestNormalizerScope:
     def test_workflow_yaml_untouched(self) -> None:
         """The schema fix MUST NOT apply to non-agent manifests."""

@@ -227,6 +227,33 @@ def _normalize_agent_manifest_schema(path: str, content: str) -> str:
 
     changed = False
 
+    # --- Drift 0: missing permissions block ---
+    # AgentManifest's `permissions: PermissionPolicy` field has a default_factory,
+    # so pydantic accepts a manifest without it. But the smoke runner (and
+    # human reviewers) treat the missing block as an incomplete manifest. Add
+    # an explicit default block — chosen by category so code-writing agents
+    # don't ship with restrictive `file_edit: ask` defaults that would block
+    # their first file write at runtime.
+    if "permissions" not in data:
+        category = str(data.get("category") or "").lower()
+        # Code-writing categories need file_edit + shell_command allow
+        if any(t in category for t in ("codegen", "code", "fast", "direct", "writer", "migration", "test")):
+            data["permissions"] = {
+                "file_edit": "allow",
+                "shell_command": "allow",
+                "external_api": "deny",
+                "browser": "deny",
+            }
+        # Review/analysis/reasoning agents stay safe-by-default
+        else:
+            data["permissions"] = {
+                "file_edit": "deny",
+                "shell_command": "ask",
+                "external_api": "deny",
+                "browser": "deny",
+            }
+        changed = True
+
     # --- Drift 1: constraints as list ---
     constraints = data.get("constraints")
     if isinstance(constraints, list):
