@@ -42,11 +42,20 @@ purpose: "Business intent — why this domain exists"
 owner: backend-team
 industry: ecommerce            # or fintech, healthcare, aws-ops, k8s-ops...
 
-provider:
-  name: anthropic
-  model: claude-sonnet-4-5-20250929
-  max_tokens: 8192
-  api_key_env: ANTHROPIC_API_KEY
+# Genesis reads these to learn the team's patterns. Inline form
+# (path-based) — works without registering the team in workspace.yaml.
+reference:
+  - path: ./src
+target:
+  - path: ./src
+  - path: ./tests
+docs:
+  - path: ./docs
+
+intent: |
+  One-paragraph plain-English description of what these agents are for.
+  Optional but recommended — genesis uses it to bias workflow selection
+  and tool discovery (especially when sources are sparse).
 
 capabilities:                  # hints for genesis
   - fastapi
@@ -59,24 +68,49 @@ workspace_policy:
   require_tests: true
 ```
 
-Register your domain in `shadow-gentcore/config/workspace.yaml`:
+Place a provider config at `<domain>/config/provider.yaml` — this is
+where the framework reads model + auth from (NOT inline in `domain.yaml`):
 
 ```yaml
-teams:
-  my-backend:
-    industry: ecommerce
-    trusted: true
-    reference:
-      - path: ../my-backend/src
-    target:
-      - path: ../my-backend/src
-      - path: ../my-backend/tests
-    docs:
-      - path: ../my-backend/docs
-      - path: ../my-backend/context
+# my-backend/config/provider.yaml
+provider: anthropic
+model: claude-sonnet-4-5-20250929
+max_tokens: 8192
+api_key_env: ANTHROPIC_API_KEY
+# Optional — point at an Anthropic-compat gateway:
+# base_url: https://open.bigmodel.cn/api/anthropic
 ```
 
-**At this point** your domain repo has `domain.yaml` but no agents yet.
+> **Two equivalent invocation paths.** The path-based shape above is the
+> recommended end-user flow:
+>
+> ```bash
+> ./ai genesis build --domain /path/to/my-backend
+> ```
+>
+> Framework developers who want to wire one repo to many teams can use
+> the legacy `--team <name>` shortcut by registering the team in
+> `shadow-gentcore/config/workspace.yaml` under the `teams:` block:
+>
+> ```yaml
+> teams:
+>   my-backend:
+>     industry: ecommerce
+>     trusted: true
+>     reference: [{ path: ../my-backend/src, label: "..." }]
+>     target:    [{ path: ../my-backend/src }, { path: ../my-backend/tests }]
+>     docs:      [{ path: ../my-backend/docs, type: documents }]
+>     focus:     [fastapi, sqlalchemy, pytest]
+>     output:    ../my-backend
+>     provider_config: ../my-backend/config/provider.yaml
+> ```
+>
+> Both paths produce identical output. The `--domain` form keeps your
+> domain decoupled from `shadow-gentcore`'s repo state, which is what
+> end-user teams typically want.
+
+**At this point** your domain repo has `domain.yaml` + `config/provider.yaml`
+but no agents yet.
 
 ---
 

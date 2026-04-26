@@ -54,36 +54,91 @@ cd ~/shadow-gentcore
 
 ---
 
-## 3. Register your domain
+## 3. Configure your domain
 
-Edit `shadow-gentcore/config/workspace.yaml`:
+Two equivalent invocation paths — pick one.
+
+### Path A — recommended for end users (path-based, no workspace.yaml edit)
+
+Place `domain.yaml` and `config/provider.yaml` in your domain repo:
+
+```yaml
+# my-backend/domain.yaml
+name: my-backend
+owner: backend-team
+purpose: "What this service is for"
+version: "1.0.0"
+industry: ecommerce
+reference:
+  - path: ./src
+target:
+  - path: ./src
+  - path: ./tests
+docs:
+  - path: ./docs
+intent: |
+  Optional one-paragraph plain-English description — biases workflow selection.
+capabilities: [fastapi, sqlalchemy, pytest]
+workspace_policy: {file_edit: allow, shell_command: ask, require_tests: true}
+```
+
+```yaml
+# my-backend/config/provider.yaml — provider config is read from HERE,
+# NOT from inline `provider:` in domain.yaml
+provider: anthropic
+model: claude-sonnet-4-5-20250929
+max_tokens: 8192
+api_key_env: ANTHROPIC_API_KEY
+# Optional: point at an Anthropic-compat gateway
+# base_url: https://open.bigmodel.cn/api/anthropic
+```
+
+Then invoke with `--domain`:
+
+```bash
+./ai genesis build --domain ../my-backend
+./ai run workflow ../my-backend/workflows/feature_delivery.yaml --domain ../my-backend --task '{...}'
+```
+
+### Path B — framework dev (workspace.yaml registration)
+
+Edit `shadow-gentcore/config/workspace.yaml` to add an entry under `teams:`:
 
 ```yaml
 teams:
   my-backend:
     industry: ecommerce
     trusted: true
-    reference:
-      - path: ../my-backend/src              # Genesis reads this as "how we do things"
-    target:
-      - path: ../my-backend/src              # What agents are allowed to modify
-      - path: ../my-backend/tests
-    docs:
-      - path: ../my-backend/docs             # Optional domain docs
+    reference: [{ path: ../my-backend/src, label: "..." }]
+    target:    [{ path: ../my-backend/src }, { path: ../my-backend/tests }]
+    docs:      [{ path: ../my-backend/docs, type: documents }]
+    focus:     [fastapi, sqlalchemy, pytest]
+    output:    ../my-backend
+    provider_config: ../my-backend/config/provider.yaml
 ```
 
-Edit `my-backend/domain.yaml` and set the `name:` + `purpose:` fields.
+Then invoke with `--team`:
+
+```bash
+./ai genesis build --team my-backend
+```
+
+Path A keeps your domain decoupled from `shadow-gentcore`. Path B is convenient when one framework checkout is wired to many teams.
 
 ---
 
 ## 4. Smoke test (zero cost, no API key needed)
 
 ```bash
-./ai test smoke                              # full simulated journey
+./ai test smoke                              # full simulated journey + pre-flight checks
 ./ai test smoke --domain ../my-backend       # health-check your domain once it's built
 ```
 
-Expected: `13/13 steps passed`. If this fails, something is wrong with the install — don't proceed until it's green.
+What to expect:
+- `Pre-flight: N/M passed` — generic environment checks (sibling repos, credential availability, sample-domain reachability). 9/12 is the typical clean baseline; the 3 misses are usually unresolved optional credentials (GitHub, Slack, Jira), not blockers.
+- `Domain health: <name>` — per-domain `Score: X%`, agent-by-agent + workflow-by-workflow status. **A freshly-genesis'd domain should score 100%.** Anything lower indicates real schema or completeness gaps in the generated agents.
+
+If pre-flight isn't 9/12+ or smoke domain health stays below 100% after a clean genesis, something is wrong with the install — don't proceed until it's green.
 
 ---
 
