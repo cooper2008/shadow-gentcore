@@ -216,13 +216,26 @@ class AgentRunner:
         # Extract output_schema and declared tool list from manifest.
         # Pass full dicts (preserving desc/level fields) so ToolDisclosureRouter
         # can partition L1 vs L2 tools.  String entries default to L2.
+        # Distinguish three cases:
+        #   - manifest has no `tools` key  → declared_tools = None  (no filter — all builtins)
+        #   - manifest has `tools: []`     → declared_tools = []    (explicit empty whitelist)
+        #   - manifest has `tools: [...]`  → declared_tools = [...] (filter to declared)
+        # The middle case is what genesis single-shot agents use (architect,
+        # ConflictResolver, ContextEngineer) and pre-fix it was indistinguishable
+        # from the first — exposing every builtin and confusing weak vendors.
         output_schema: dict[str, Any] | None = None
-        declared_tools: list[Any] = []
+        declared_tools: list[Any] | None = None
         if isinstance(manifest, dict):
             output_schema = manifest.get("output_schema")
-            declared_tools = list(manifest.get("tools", []))
+            if "tools" in manifest:
+                declared_tools = list(manifest.get("tools") or [])
         else:
-            # Pydantic AgentManifest — extract tool names from tool_bindings
+            # Pydantic AgentManifest — extract tool names from tool_bindings.
+            # Pydantic always materialises a list (defaulting to []), so the
+            # missing-key distinction is unavailable here. Treat as explicit
+            # whitelist; if a Pydantic agent really wants the legacy
+            # all-builtins fallback, it can pass declared_tools=None at
+            # call sites that care.
             tool_bindings = getattr(manifest, "tool_bindings", None) or []
             declared_tools = [
                 {"name": tb.name} if hasattr(tb, "name") else str(tb)
@@ -294,7 +307,12 @@ class AgentRunner:
             execute_kwargs: dict[str, Any] = {}
             if output_schema:
                 execute_kwargs["output_schema"] = output_schema
-            if declared_tools:
+            # IMPORTANT: pass declared_tools when present, including the
+            # explicit empty list. `[]` means "this agent declared no tools"
+            # — distinct from `None` ("no whitelist filter"). Pre-fix
+            # `if declared_tools:` collapsed both cases, exposing every
+            # registered builtin to single-shot agents that asked for none.
+            if declared_tools is not None:
                 execute_kwargs["declared_tools"] = declared_tools
             result = await strategy.execute(
                 messages=messages,

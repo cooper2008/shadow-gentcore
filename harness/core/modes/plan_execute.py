@@ -31,10 +31,13 @@ class PlanExecuteStrategy(ExecutionStrategy):
         **kwargs: Any,
     ) -> dict[str, Any]:
         output_schema = kwargs.get("output_schema")
-        declared_tools: list[str] = kwargs.get("declared_tools", [])
+        # Default to None (not []) so an absent declared_tools means "no
+        # whitelist filter — expose all builtins". An explicit empty list
+        # from the caller still means "no tools" and is honoured.
+        declared_tools: list[str] | None = kwargs.get("declared_tools", None)
         steps: list[dict[str, Any]] = []
         total_tokens = 0
-        api_tools = _build_anthropic_tools(tool_executor, allowed=declared_tools or None)
+        api_tools = _build_anthropic_tools(tool_executor, allowed=declared_tools)
         chat_kwargs: dict[str, Any] = {}
         if api_tools:
             chat_kwargs["tools"] = api_tools

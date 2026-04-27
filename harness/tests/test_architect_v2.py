@@ -35,10 +35,15 @@ class TestAuditRequiredSchemaChanges:
     def manifest(self) -> dict:
         return yaml.safe_load((V2_PATH / "agent_manifest.yaml").read_text())
 
-    def test_harness_is_required_per_roster_entry(self, manifest: dict) -> None:
-        """G-ARC fix: pre-v2 validator missed harness; v2 enforces it."""
+    def test_harness_is_a_known_property_per_roster_entry(self, manifest: dict) -> None:
+        """G-ARC fix: harness must remain a documented property even though
+        it's no longer required (tier-2 model relax — Builder fills defaults).
+
+        Strong models still emit it; the schema just doesn't punish weak
+        models for omitting it.
+        """
         roster_item = manifest["output_schema"]["properties"]["agent_roster"]["items"]
-        assert "harness" in roster_item["required"]
+        assert "harness" in roster_item["properties"]
 
     def test_capability_bindings_is_a_property(self, manifest: dict) -> None:
         """B5 — per-step capability resolution traceable in output."""
@@ -70,10 +75,13 @@ class TestAuditRequiredSchemaChanges:
         assert "reasoning" in categories
         assert "fast-codegen" in categories
 
-    def test_reuse_ratio_in_design_quality(self, manifest: dict) -> None:
-        """B5 — architecture health metric: how much did v2 reuse?"""
+    def test_reuse_ratio_in_design_quality_properties(self, manifest: dict) -> None:
+        """B5 — reuse_ratio remains a documented design_quality property
+        with [0,1] bounds, even though weak models may omit it (tier-2 relax).
+        Strong models still emit it for analytics.
+        """
         dq = manifest["output_schema"]["properties"]["design_quality"]
-        assert "reuse_ratio" in dq["required"]
+        assert "reuse_ratio" in dq["properties"]
         assert dq["properties"]["reuse_ratio"]["minimum"] == 0
         assert dq["properties"]["reuse_ratio"]["maximum"] == 1
 
@@ -223,9 +231,49 @@ class TestMultiWorkflowSchema:
         assert "process" in props, "workflow_designs[].process missing (traceability)"
         assert "name" in item_schema.get("required", [])
 
-    def test_triage_design_is_required_property(self, manifest: dict) -> None:
-        required = manifest["output_schema"]["required"]
-        assert "triage_design" in required
+    def test_tier2_required_minimum_is_three_top_level_fields(self, manifest: dict) -> None:
+        """Tier-2 model relax: only `agent_roster`, `workflow_designs`, and
+        `design_quality` are strictly required at the top level.
+
+        Pre-relax this list had 6 required fields and weak-instruct vendors
+        (GLM-5.1 via BigModel Anthropic-compat) emitted plain `{}` rather
+        than the full nested structure — silently failing the architect_gate
+        on every prompt-driven genesis run.
+        """
+        required = set(manifest["output_schema"]["required"])
+        assert required == {"agent_roster", "workflow_designs", "design_quality"}
+
+    def test_tier2_required_roster_item_minimum_is_identity_plus_decision(
+        self, manifest: dict
+    ) -> None:
+        """Tier-2 model relax: a roster entry only needs identity fields
+        + the reuse/synthesize decision. Builder hooks (see
+        _normalize_agent_manifest_schema) fill defaults for permissions,
+        constraints, harness, execution_mode, etc. Strong models still emit
+        all of them; weak models can omit and the build succeeds.
+        """
+        roster_item = manifest["output_schema"]["properties"]["agent_roster"]["items"]
+        required = set(roster_item["required"])
+        assert required == {"name", "purpose", "category", "decision"}
+
+    def test_tier2_design_quality_required_is_only_gate_inputs(
+        self, manifest: dict
+    ) -> None:
+        """Tier-2 model relax: design_quality only needs the 2 fields the
+        architect_gate evaluates (`agent_count`, `dag_valid`). The other
+        4 are still emitted by strong models but are gate-soft.
+        """
+        dq = manifest["output_schema"]["properties"]["design_quality"]
+        assert set(dq["required"]) == {"agent_count", "dag_valid"}
+
+    def test_triage_design_is_a_known_property(self, manifest: dict) -> None:
+        """triage_design remains a documented property (Builder reads it
+        when emitted) but is no longer in the strict-required list — weak
+        models that omit it now produce gate-passable output and Builder
+        skips triage.yaml when len(workflow_designs) == 1.
+        """
+        props = manifest["output_schema"]["properties"]
+        assert "triage_design" in props
 
     def test_triage_design_has_required_fields(self, manifest: dict) -> None:
         triage_schema = manifest["output_schema"]["properties"]["triage_design"]

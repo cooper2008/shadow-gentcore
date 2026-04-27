@@ -206,7 +206,14 @@ def _build_anthropic_tools(
 
     # Apply manifest whitelist — only expose tools the agent declared.
     # `allowed` may be plain strings or dicts {name: ...} from manifest tool entries.
-    if allowed:
+    # IMPORTANT: an empty list (`tools: []`) means "no tools" — distinct from
+    # `None` ("no whitelist filter, expose every registered adapter"). Pre-fix
+    # used `if allowed:` which collapsed both into the no-filter branch, so
+    # single-shot agents like AgentArchitect/v2, ConflictResolver, and
+    # ContextEngineer (which declare `tools: []` by design) silently received
+    # ALL 100+ registered builtins. Weak-instruct vendors (GLM-5.1) then
+    # picked a wrong tool, got no useful result, and gave up emitting `{}`.
+    if allowed is not None:
         allowed_names: set[str] = {
             a["name"] if isinstance(a, dict) else str(a)
             for a in allowed
@@ -384,7 +391,11 @@ class ReActStrategy(ExecutionStrategy):
         **kwargs: Any,
     ) -> dict[str, Any]:
         output_schema = kwargs.get("output_schema")
-        declared_tools: list[Any] = kwargs.get("declared_tools", [])
+        # Default to None (not []) so caller-omitted means "no whitelist
+        # filter — expose all builtins". Caller-explicit `[]` still means
+        # "agent declared no tools" and is honoured. The two cases must
+        # stay distinct after the empty-list whitelist fix.
+        declared_tools: list[Any] | None = kwargs.get("declared_tools", None)
         steps: list[dict[str, Any]] = []
         current_messages = list(messages)
         total_tokens = 0
@@ -402,7 +413,12 @@ class ReActStrategy(ExecutionStrategy):
             api_tools = router.current_api_tools()
         else:
             # Phase 1 flat whitelist — _build_anthropic_tools handles str/dict entries
-            api_tools = _build_anthropic_tools(tool_executor, allowed=declared_tools or None)
+            # IMPORTANT: pass declared_tools as-is (don't `or None`-collapse).
+            # `[]` means the agent declared NO tools — distinct from `None`
+            # ("no whitelist filter"). Pre-fix `declared_tools or None`
+            # turned an empty list into None, exposing every registered
+            # builtin to single-shot agents that asked for none.
+            api_tools = _build_anthropic_tools(tool_executor, allowed=declared_tools)
 
         for step_num in range(self.max_steps):
             # Pass tools to provider so LLM returns structured tool_use blocks

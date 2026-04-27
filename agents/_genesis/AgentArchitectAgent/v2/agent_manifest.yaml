@@ -76,15 +76,24 @@ input_schema:
 
 output_schema:
   type: object
-  required: [agent_roster, workflow_designs, triage_design, tool_assignments, grading_specs, design_quality]
+  # Tier-2-model friendly: only the 3 fields the gate + Builder absolutely
+  # need. triage_design / tool_assignments / grading_specs are optional —
+  # Builder hooks (and downstream normalizers) fill sensible defaults when
+  # the LLM omits them. Pre-fix this list was 6 fields and weak-instruct
+  # vendors (GLM-5.1 via BigModel) silently emitted `{}` rather than
+  # produce the full nested structure.
+  required: [agent_roster, workflow_designs, design_quality]
   properties:
     agent_roster:
       type: array
       items:
         type: object
-        # G-ARC fix: `harness` is now REQUIRED. Pre-v2 the validator accepted
-        # designs without it; Builder then had nothing to wire gates from.
-        required: [name, purpose, category, version, description, execution_mode, tools, permissions, constraints, input_schema, output_schema, harness, decision]
+        # Tier-2-friendly: only IDENTITY + DECISION fields are required.
+        # Builder hooks already default permissions, constraints, harness,
+        # and execution_mode when missing (see _normalize_agent_manifest_schema).
+        # Architect should still aim to emit the full design — these are
+        # only the non-defaultable bits.
+        required: [name, purpose, category, decision]
         properties:
           name: {type: string}
           purpose: {type: string}
@@ -348,7 +357,12 @@ output_schema:
           pass_threshold: {type: number, minimum: 0, maximum: 1}
     design_quality:
       type: object
-      required: [process_coverage_pct, dag_valid, agent_count, has_feedback_loops, has_compliance_gates, reuse_ratio]
+      # Tier-2-friendly: only the 2 fields the architect_gate evaluates are
+      # required. The other 4 (process_coverage_pct, has_feedback_loops,
+      # has_compliance_gates, reuse_ratio) are still emitted by strong models
+      # and surfaced for analytics, but weak models that omit them no longer
+      # silently fail the gate at architect step.
+      required: [agent_count, dag_valid]
       properties:
         process_coverage_pct: {type: number, minimum: 0, maximum: 100}
         dag_valid: {type: boolean}

@@ -67,10 +67,26 @@ class TestBuildAnthropicToolsWhitelist:
         names = {t["name"] for t in tools}
         assert names == {"file_read", "shell_exec", "list_dir"}
 
-    def test_empty_allowed_returns_all_adapters(self) -> None:
+    def test_empty_allowed_returns_no_tools(self) -> None:
+        """Regression: `allowed=[]` is "agent declared no tools", NOT "no filter".
+
+        Pre-fix this collapsed to `allowed=None` (return all adapters), which
+        meant single-shot agents declaring `tools: []` (AgentArchitect/v2,
+        ConflictResolver, ContextEngineer) silently received every registered
+        builtin. Weak-instruct vendors (GLM-5.1 via BigModel) then picked a
+        wrong tool, got no useful result, and gave up emitting `{}` — which
+        propagated as a gate failure at the architect step in genesis.
+        """
         executor = self._make_executor(["file_read", "shell_exec"])
         tools = _build_anthropic_tools(executor, allowed=[])
-        # Empty list treated as "no filter" → backward compat
+        # Empty list = explicit empty whitelist = NO tools exposed.
+        assert tools == []
+
+    def test_none_allowed_returns_all_adapters(self) -> None:
+        """`allowed=None` (whitelist absent) keeps the legacy backward-compat
+        path: expose every registered adapter. Distinct from `allowed=[]`."""
+        executor = self._make_executor(["file_read", "shell_exec"])
+        tools = _build_anthropic_tools(executor, allowed=None)
         names = {t["name"] for t in tools}
         assert names == {"file_read", "shell_exec"}
 
@@ -195,8 +211,15 @@ class TestReActWhitelistIntegration:
         assert tool_names == {"file_read", "shell_exec"}
 
     @pytest.mark.asyncio
-    async def test_empty_declared_tools_passes_all_registered(self) -> None:
-        """Empty declared_tools list → all registered tools (backward compat)."""
+    async def test_empty_declared_tools_exposes_no_tools(self) -> None:
+        """Regression: explicit `declared_tools=[]` means agent declared no
+        tools — must NOT fall back to "all registered". Pre-fix it did, so
+        single-shot agents (AgentArchitect/v2, ConflictResolver,
+        ContextEngineer) silently received every builtin and confused weak
+        vendors (GLM-5.1) into emitting `{}`. The omitted-kwarg path
+        (test_no_declared_tools_passes_all_registered) still gets the
+        legacy all-builtins fallback for non-genesis agents.
+        """
         executor = _MockToolExecutor(["file_read", "shell_exec"])
         provider = _CapturingProvider([
             {"content": "done", "tokens_used": 5, "tool_calls": []},
@@ -211,8 +234,8 @@ class TestReActWhitelistIntegration:
         )
 
         first_call_tools = provider.calls[0]["kwargs"].get("tools", [])
-        tool_names = {t["name"] for t in first_call_tools}
-        assert tool_names == {"file_read", "shell_exec"}
+        # No tools should appear — `tools` kwarg either absent or empty list.
+        assert first_call_tools == []
 
 
 # ---------------------------------------------------------------------------
