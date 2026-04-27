@@ -90,6 +90,39 @@ async def test_forced_mode_only_submit_output_tool() -> None:
     assert resp.raw["submit_output_fired"] is True
 
 
+@pytest.mark.asyncio
+async def test_empty_tools_list_treated_as_forced_mode() -> None:
+    """Regression: `tools=[]` (empty list) must behave the same as `tools=None`.
+
+    Pre-fix, an empty tools list fell through to coexist mode (tool_choice=auto)
+    instead of forced mode. Vendors via Anthropic-compat (GLM/MiniMax) would
+    then emit plain `{}` content instead of calling the only available tool —
+    silently breaking single-shot agents like AgentArchitect/v2,
+    ConflictResolver, and ContextEngineer that declare `tools: []` in their
+    manifests by design (no iterative tool use; preload-only context).
+    """
+    fake = _FakeClient([
+        _FakeContentBlock(tool_use={
+            "id": "tu_1", "name": "submit_output",
+            "input": {"summary": "ok", "score": 1.0},
+        }),
+    ])
+    prov = _provider_with_fake(fake)
+    resp = await prov.chat(
+        [{"role": "user", "content": "hi"}],
+        tools=[],  # explicitly empty — was the silent-failure path
+        output_schema=OUTPUT_SCHEMA,
+    )
+
+    sent_tools = fake.last_kwargs["tools"]
+    assert len(sent_tools) == 1, "empty tools list must collapse to forced submit_output mode"
+    assert sent_tools[0]["name"] == "submit_output"
+    assert fake.last_kwargs["tool_choice"] == {"type": "tool", "name": "submit_output"}, \
+        "tool_choice must force submit_output when no real tools are declared"
+    assert json.loads(resp.content) == {"summary": "ok", "score": 1.0}
+    assert resp.raw["submit_output_fired"] is True
+
+
 # ── Coexist mode (schema + tools) — H1 core fix ────────────────────────────
 
 

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Thin wrapper for the shadow-gentcore CLI.
+# Documented entry point — every doc says `./ai <command>`. Resolves to the
+# installed console_script (.venv/bin/ai from `pip install -e .`) and falls
+# back to `python -m harness.cli.ai` if the venv is not present.
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ -x "$HERE/.venv/bin/ai" ]]; then
+  exec "$HERE/.venv/bin/ai" "$@"
+fi
+
+if [[ -x "$HERE/.venv/bin/python" ]]; then
+  exec "$HERE/.venv/bin/python" -m harness.cli.ai "$@"
+fi
+
+exec python -m harness.cli.ai "$@"

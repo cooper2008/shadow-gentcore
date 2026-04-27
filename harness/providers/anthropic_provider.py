@@ -149,8 +149,16 @@ class AnthropicProvider(BaseProvider):
             "input_schema": output_schema or {"type": "object", "properties": {}},
         }
 
-        forced_submit_output = output_schema is not None and tools is None
-        coexist_submit_output = output_schema is not None and tools is not None
+        # Treat `tools=[]` the same as `tools=None`: when no real tools are
+        # available, the model has nothing to coexist with, so submit_output
+        # MUST be forced. Pre-fix, an empty list fell through to coexist mode
+        # (tool_choice=auto) and weak-instruct vendors (GLM/MiniMax via
+        # Anthropic-compat) reliably emitted plain `{}` content instead of
+        # calling the only available tool — silently breaking single-shot
+        # agents like AgentArchitect/v2, ConflictResolver, ContextEngineer.
+        has_real_tools = bool(tools)
+        forced_submit_output = output_schema is not None and not has_real_tools
+        coexist_submit_output = output_schema is not None and has_real_tools
 
         if forced_submit_output:
             create_kwargs["tools"] = [submit_output_tool]
