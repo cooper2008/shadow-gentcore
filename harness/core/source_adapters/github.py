@@ -68,7 +68,6 @@ async def _http_get_with_backoff(
     GitHub's X-RateLimit-Remaining so slow drift toward the quota cap
     is visible in operational logs.
     """
-    import httpx
 
     for attempt in range(1, max_attempts + 1):
         resp = await client.get(url, headers=headers)

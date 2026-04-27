@@ -6,7 +6,7 @@ import logging
 
 import pytest
 
-from harness.core.composition_engine import CompositionEngine, GateFailure
+from harness.core.composition_engine import CompositionEngine
 
 
 class TestCompositionEngine:

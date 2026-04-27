@@ -17,7 +17,6 @@ import datetime as _dt
 from pathlib import Path
 
 import pytest
-import yaml
 
 
 # ── P0-1: Tar symlink rejection ──────────────────────────────────────────

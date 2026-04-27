@@ -16,12 +16,9 @@ Coverage spans:
 
 from __future__ import annotations
 
-import asyncio
 import tempfile
 from pathlib import Path
-from typing import Any
 
-import pytest
 
 from harness.core.agent_runner import AgentRunner
 

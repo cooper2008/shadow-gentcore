@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from harness.authoring.validator import Validator, ValidationResult, classify_agent
+from harness.authoring.validator import Validator, classify_agent
 
 
 def _write(path: Path, content: str) -> None:

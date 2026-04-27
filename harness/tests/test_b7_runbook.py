@@ -15,7 +15,6 @@ from __future__ import annotations
 from pathlib import Path
 from textwrap import dedent
 
-import pytest
 
 
 RUNBOOK_SCHEMA_DOC = (

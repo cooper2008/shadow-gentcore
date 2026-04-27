@@ -14,21 +14,16 @@ so that agents return schema-correct output that OutputValidator can actually gr
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
-from typing import Any
 
 import pytest
 import yaml
 
 from harness.core.manifest_loader import ManifestLoader
-from harness.core.agent_runner import AgentRunner, AgentState
-from harness.core.composition_engine import CompositionEngine, ExecutionEvent
+from harness.core.agent_runner import AgentRunner
+from harness.core.composition_engine import ExecutionEvent
 from harness.core.output_validator import OutputValidator
 from harness.core.rule_engine import RuleEngine, RuleContext
-from harness.core.prompt_assembler import PromptAssembler
-from harness.core.tool_executor import ToolExecutor
-from harness.tools.builtin import register_builtins
 from harness.tests.genesis_test_provider import GenesisTestProvider
 
 

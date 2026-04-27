@@ -6,7 +6,6 @@ import json
 import tempfile
 from pathlib import Path
 
-import pytest
 
 from harness.bridges.browser_bridge import BrowserBridge
 from harness.bridges.observability_bridge import ObservabilityBridge

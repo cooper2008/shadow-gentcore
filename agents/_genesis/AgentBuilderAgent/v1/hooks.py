@@ -698,7 +698,6 @@ def _propagate_credentials(domain_root: Path, written_paths: list[str]) -> dict[
     or empty dict if the registry cannot be loaded.
     """
     try:
-        import sys
         import yaml
         # Locate agent-tools packs dir (same pattern as manifest_loader preload)
         import agent_tools

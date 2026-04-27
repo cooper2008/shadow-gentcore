@@ -5,9 +5,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pytest
 
-from harness.lints.rules import ArchitectureLinter, LintResult
+from harness.lints.rules import ArchitectureLinter
 
 
 class TestArchitectureLinter:

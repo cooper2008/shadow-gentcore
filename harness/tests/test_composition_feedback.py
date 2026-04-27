@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
 
 import pytest
 
-from harness.core.composition_engine import CompositionEngine, GateFailure, HumanEscalation
+from harness.core.composition_engine import CompositionEngine
 from harness.core.feedback_loop import FeedbackLoop
 
 

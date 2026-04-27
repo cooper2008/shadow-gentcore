@@ -7,7 +7,6 @@ These adapters translate to concrete subprocess calls.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import shlex
 import urllib.parse
@@ -359,7 +358,6 @@ class OriginFetchAdapter:
 
     async def invoke(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         import fnmatch
-        import json as _json
         import time as _time
 
         path = str(arguments.get("path", "")).strip().lstrip("/")

@@ -6,7 +6,6 @@ and the AGENT_AUTH_DISABLED escape hatch for local development.
 
 import os
 
-import pytest
 from unittest.mock import patch
 
 # The app module reads AGENT_API_KEY at import time into _API_KEY.
@@ -155,7 +154,6 @@ def test_semaphore_exhausted_returns_429(monkeypatch):
     endpoint = route.endpoint  # the async def run_agent_endpoint
 
     # Extract _semaphore from the closure of create_app
-    import inspect
     frame_locals = {}
     # Walk the closures of the endpoint to find the semaphore
     semaphore = None

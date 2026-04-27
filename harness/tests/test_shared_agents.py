@@ -1,11 +1,9 @@
 """Tests for _shared granular agents."""
 from __future__ import annotations
 from pathlib import Path
-from typing import Any
 import pytest
 import yaml
 from harness.core.manifest_loader import ManifestLoader
-from harness.core.composition_engine import CompositionEngine
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 SHARED = PROJECT_ROOT / "agents" / "_shared"

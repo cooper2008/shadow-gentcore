@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from harness.core.rule_engine import RuleEngine, RuleContext, RuleDecision, Decision
+from harness.core.rule_engine import RuleEngine, RuleContext
 from harness.core.tool_executor import ToolExecutor
 from harness.tools.builtin import register_builtins
 

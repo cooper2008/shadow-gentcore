@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import re
@@ -247,7 +246,7 @@ async def run_agent(
             context_items=context_items,
         )
         return {"status": "completed", "output": result}
-    except Exception as exc:
+    except Exception:
         request_id = uuid.uuid4().hex[:8]
         logger.exception("Request %s failed", request_id)
         return {"status": "error", "error": "Internal error processing request", "request_id": request_id}
@@ -284,7 +283,7 @@ async def run_workflow(
         )
         result = await engine.execute_dag(workflow_data["steps"], step_configs)
         return result
-    except Exception as exc:
+    except Exception:
         request_id = uuid.uuid4().hex[:8]
         logger.exception("Request %s failed", request_id)
         return {"status": "error", "error": "Internal error processing request", "request_id": request_id}

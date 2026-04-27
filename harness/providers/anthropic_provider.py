@@ -365,7 +365,8 @@ def _parse_minimax_tool_calls(
         submit_output completion path. Otherwise returns the extracted
         tool_calls and None.
     """
-    import re, json as _json
+    import re
+    import json as _json
 
     results: list[dict[str, Any]] = []
     submit_args: dict[str, Any] | None = None

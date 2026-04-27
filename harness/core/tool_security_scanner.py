@@ -445,7 +445,6 @@ def _extract_host(url_or_template: str) -> str | None:
     here, just surface obvious bad literals in YAML.
     Returns lowercase host without port, or None if not extractable.
     """
-    import re as _re
     from urllib.parse import urlparse as _urlparse
     s = (url_or_template or "").strip()
     if not s:

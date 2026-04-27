@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import tempfile
-from datetime import datetime
 
 import pytest
 
@@ -59,7 +58,7 @@ class TestLocalFilesystemStorage:
         with tempfile.TemporaryDirectory() as tmpdir:
             storage = LocalFilesystemStorage(base_dir=tmpdir)
             # Use a relative path so the artifact lands inside base_dir
-            artifact = _make_artifact("art-1", f"t-1/artifacts/art-1.json")
+            artifact = _make_artifact("art-1", "t-1/artifacts/art-1.json")
             await storage.save_artifact(artifact)
             loaded = await storage.load_artifact("art-1")
             assert loaded.artifact_id == "art-1"

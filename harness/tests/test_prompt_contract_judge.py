@@ -18,8 +18,6 @@ import pytest
 import yaml
 
 from harness.core.prompt_contract_validator import (
-    ContractFinding,
-    validate_agent_contract,
     validate_agent_contract_with_judge,
 )
 

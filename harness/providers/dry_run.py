@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, AsyncIterator
 
-from harness.providers.base_provider import BaseProvider, LLMResponse, LLMChunk
+from harness.providers.base_provider import BaseProvider, LLMChunk
 
 
 class DryRunProvider(BaseProvider):

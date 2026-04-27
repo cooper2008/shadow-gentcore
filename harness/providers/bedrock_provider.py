@@ -68,7 +68,6 @@ class BedrockProvider(BaseProvider):
 
     async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
         """Send a chat completion via AWS Bedrock."""
-        import json
 
         client = self._get_client()
         model_id = kwargs.pop("model", self._model_id)

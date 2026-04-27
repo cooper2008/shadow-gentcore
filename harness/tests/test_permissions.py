@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from harness.core.permissions import PermissionResolver, PermissionDecision
 

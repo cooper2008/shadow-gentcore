@@ -8,11 +8,9 @@ extraction, scoring, and rule semantics.
 
 from __future__ import annotations
 
-import pytest
 
 from harness.core.citation_checker import (
     Citation,
-    CitationReport,
     extract_citations,
     score_citations,
     validate_citations,

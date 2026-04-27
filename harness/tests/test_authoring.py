@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
-import pytest
 
 from harness.authoring.scaffolder import Scaffolder
 from harness.authoring.validator import Validator, ValidationResult

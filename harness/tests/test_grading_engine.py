@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from agent_contracts.contracts.feature_contract import (
-    CriterionResult,
     CriterionStatus,
     FeatureContract,
 )

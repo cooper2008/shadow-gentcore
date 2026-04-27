@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
 
 from harness.core.provider_detector import (
     DetectedVendor,

@@ -418,7 +418,7 @@ def _preload_project_file_tree(domain_root: Path) -> dict[str, Any] | None:
         "Use this to pick paths for `origin_fetch(path)` instead of "
         "guessing. For deeper browsing call `list_paths(prefix, depth)`.",
         "",
-        f"```",
+        "```",
         f"{rel_target}/",
     ]
     truncated = len(entries) >= MAX_ENTRIES

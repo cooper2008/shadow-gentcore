@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 
-from harness.core.agent_runner import _call_hook_safe, _HOOK_TIMEOUT
+from harness.core.agent_runner import _call_hook_safe
 from harness.core.manifest_loader import ManifestLoader
 
 

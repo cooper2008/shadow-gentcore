@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from harness.core.composition_engine import CompositionEngine, GateFailure
+from harness.core.composition_engine import CompositionEngine
 from harness.core.runtime import LocalRuntime, CloudRuntime
 from harness.core.ci_hooks import CIHookRegistry
 from harness.core.cross_domain import DomainRegistry

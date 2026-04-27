@@ -23,9 +23,7 @@ from harness.core.credential_backends import (
 )
 from harness.core.credential_registry import (
     CredentialRegistry,
-    CredentialRequirement,
     MissingCredentialError,
-    ValidationReport,
 )
 
 

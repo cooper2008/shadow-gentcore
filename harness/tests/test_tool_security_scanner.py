@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
 from harness.core.tool_security_scanner import (
-    ScanFinding,
-    ScanResult,
     load_policy,
     scan_directory,
     scan_pack_yaml,

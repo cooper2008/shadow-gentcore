@@ -68,7 +68,7 @@ def domain_register(domain_path: str, dtype: str) -> None:
     ws_path.write_text(_yaml.dump(data, default_flow_style=False, sort_keys=False), encoding="utf-8")
 
     click.echo(f"Registered domain: {rel_path} (type: {dtype})")
-    click.echo(f"Run './ai workspace' to verify.")
+    click.echo("Run './ai workspace' to verify.")
 
 
 @domain.command("init")
@@ -1004,7 +1004,7 @@ def tool_add(name: str) -> None:
     click.echo(f"  {setup}")
     click.echo()
     click.echo("To use in your agent manifest, add to tools section:")
-    click.echo(f'  - name: <tool_name>')
+    click.echo('  - name: <tool_name>')
     click.echo(f'    pack: "{pack_id}"')
 
 
@@ -1073,10 +1073,10 @@ def tool_create(pack_name: str, tool_names: tuple[str, ...], category: str | Non
     click.echo(f"  Tools: {', '.join(tool_names)}")
     click.echo()
     click.echo("Next steps:")
-    click.echo(f"  1. Add adapter commands in harness/tools/builtin.py:")
+    click.echo("  1. Add adapter commands in harness/tools/builtin.py:")
     for t in tool_names:
         click.echo(f'     "{t}": _make(lambda a: f"your_command {{a.get(\'arg\', \'\')}} 2>&1"),')
-    click.echo(f"  2. Use in agent manifests:")
+    click.echo("  2. Use in agent manifests:")
     click.echo(f'     pack: "{pack_id}"')
 
 
@@ -1153,7 +1153,7 @@ def learn(repo_paths: tuple[str, ...], domain_name: str | None, output_dir: str,
         click.echo(f"  {step_name}: {status}")
 
     if result["status"] == "completed":
-        click.echo(f"\nDomain generated. Next steps:")
+        click.echo("\nDomain generated. Next steps:")
         click.echo(f"  ./ai validate {output_dir}/{domain_name}")
         click.echo(f"  ./ai run workflow {output_dir}/{domain_name}/workflows/<name>.yaml --dry-run")
 
@@ -1229,8 +1229,8 @@ def mcp_add(name: str, cmd: str, desc: str) -> None:
 
     click.echo(f"Added MCP server '{name}'")
     click.echo(f"  command: {cmd}")
-    click.echo(f"\nNext steps:")
-    click.echo(f"  1. Edit config/mcp_servers.yaml to declare the server's tools")
+    click.echo("\nNext steps:")
+    click.echo("  1. Edit config/mcp_servers.yaml to declare the server's tools")
     click.echo(f'  2. Use in agent manifests: pack: "toolpack://mcp/{name}"')
 
 
@@ -1935,7 +1935,7 @@ def serve(domain: str, port: int, host: str, dry_run: bool) -> None:
         os.environ["GENTCORE_DRY_RUN"] = "1"
     os.environ["DOMAIN_PATH"] = domain_path
 
-    click.echo(f"Agent API Server")
+    click.echo("Agent API Server")
     click.echo(f"  domain: {domain_path}")
     click.echo(f"  url:    http://{host}:{port}")
     if dry_run:

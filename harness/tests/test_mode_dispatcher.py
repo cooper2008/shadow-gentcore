@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from harness.core.mode_dispatcher import ModeDispatcher
 from harness.core.modes.base import ExecutionStrategy
