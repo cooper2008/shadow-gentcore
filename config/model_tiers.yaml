@@ -1,0 +1,218 @@
+# Model capability tiers and per-category recommendations.
+#
+# Drives the provider-resolver (harness/core/provider_resolver.py): when an
+# agent doesn't declare its own `provider:` block, the resolver maps the
+# agent's `category:` → tier → first model whose `api_key_env` is present in
+# the environment. Used at two integration points:
+#
+#   1. Genesis time — Builder normalizer injects `provider:` per generated
+#      agent so weak-instruct vendors don't get assigned to code-writing
+#      slots they can't handle (e.g., MiniMax M2.7 for CodeWriter).
+#
+#   2. Genesis-step runtime — `./ai genesis build` looks up each genesis
+#      agent's tier and overrides the domain-wide default when a stronger
+#      model is available. Architect/Builder always get the strongest
+#      tier the user has credentials for.
+#
+# Authored by the platform team; users override per-domain in
+# `<domain>/config/model_tiers.yaml` (same shape — merges over this).
+#
+# Schema:
+#   tiers:                  # registry of tier definitions
+#     <tier_name>:
+#       description: ...    # human note
+#       avoid_models: [...] # list of model IDs known to fail at this tier
+#       recommended:        # ordered preference — first match wins
+#         - {provider, model, api_key_env, base_url?, max_tokens?, notes?}
+#   category_to_tier:       # agent.category → tier
+#     <category>: <tier_name>
+#   genesis_step_tiers:     # genesis-agent-id → tier (overrides category map)
+#     <agent_id>: <tier_name>
+#
+# Models in `recommended` are ordered cheapest-first within their tier so
+# the resolver picks the most cost-efficient capable option. Move a model
+# higher in the list to prefer it over cheaper alternatives.
+
+tiers:
+
+  # ────────────────────────────────────────────────────────────────
+  # codegen-strong — must reliably emit `files: [{path, content}]`
+  # arrays of substantive code. Tested against /health workflow.
+  # ────────────────────────────────────────────────────────────────
+  codegen-strong:
+    description: |
+      Code-writing agents (CodeWriter, MigrationAgent, RefactorPlanner).
+      Must produce schema-valid `files: [...]` arrays with working code,
+      not stringified JSON, not truncated, not `{}`.
+    avoid_models:
+      # Observed in this session: M2.7 fails generate_code gate with
+      # `len(files) > 0` — emits empty/incomplete arrays even with
+      # the schema explicitly declaring the shape.
+      - m2.7
+      - minimax-m2
+      - minimax-m2.7
+      # Generally, lite/preview variants of any vendor are skipped here
+      # — promote them to medium tiers, not codegen.
+      - gemini-2.0-flash-lite
+      - gemini-2.0-flash-lite-001
+      - gemini-2.5-flash-lite
+      - gemini-3.1-flash-lite-preview
+    recommended:
+      - provider: anthropic
+        model: claude-sonnet-4-5-20250929
+        api_key_env: ANTHROPIC_API_KEY
+        max_tokens: 8192
+        notes: "Highest code quality; modern API knowledge"
+      - provider: anthropic
+        model: glm-5.1
+        api_key_env: ZHIPU_API_KEY
+        base_url: https://open.bigmodel.cn/api/anthropic
+        max_tokens: 8192
+        notes: "Strong code quality; ~10× slower than Claude on long output"
+      - provider: openai
+        model: gemini-3-flash-preview
+        api_key_env: GOOGLE_API_KEY
+        base_url: https://generativelanguage.googleapis.com/v1beta/openai
+        max_tokens: 32768
+        notes: "Fast + cheap; modern FastAPI knowledge"
+      - provider: openai
+        model: gemini-2.5-flash
+        api_key_env: GOOGLE_API_KEY
+        base_url: https://generativelanguage.googleapis.com/v1beta/openai
+        max_tokens: 32768
+        notes: "Knowledge cutoff older — may emit removed library APIs"
+
+  # ────────────────────────────────────────────────────────────────
+  # planning-medium — reasoning over inputs, no large structured arrays
+  # ────────────────────────────────────────────────────────────────
+  planning-medium:
+    description: |
+      Agents whose output is reasoning + small structured fields:
+      SpecAnalyzer, KnowledgeMapper, ContextEngineer, Architect.
+      Verified working with all 4 models in this session.
+    avoid_models: []
+    recommended:
+      - provider: openai
+        model: gemini-3-flash-preview
+        api_key_env: GOOGLE_API_KEY
+        base_url: https://generativelanguage.googleapis.com/v1beta/openai
+        max_tokens: 32768
+      - provider: openai
+        model: gemini-2.5-flash
+        api_key_env: GOOGLE_API_KEY
+        base_url: https://generativelanguage.googleapis.com/v1beta/openai
+        max_tokens: 32768
+      - provider: anthropic
+        model: glm-5.1
+        api_key_env: ZHIPU_API_KEY
+        base_url: https://open.bigmodel.cn/api/anthropic
+        max_tokens: 8192
+      - provider: anthropic
+        model: m2.7
+        api_key_env: MINIMAX_API_KEY
+        base_url: https://api.minimax.io/anthropic
+        max_tokens: 8192
+        notes: "Acceptable for planning when output schema is flat"
+      - provider: anthropic
+        model: claude-sonnet-4-5-20250929
+        api_key_env: ANTHROPIC_API_KEY
+        max_tokens: 8192
+
+  # ────────────────────────────────────────────────────────────────
+  # review-medium — produces structured findings/scores
+  # ────────────────────────────────────────────────────────────────
+  review-medium:
+    description: |
+      Reviewer, LinterAgent, ComplianceChecker, SecurityScan. Need to
+      emit a structured findings array with severity/category fields —
+      similar shape to codegen but smaller, so weaker models OK.
+    avoid_models:
+      - m2.7  # array-of-objects output is M2.7's weakness
+    recommended:
+      - provider: openai
+        model: gemini-3-flash-preview
+        api_key_env: GOOGLE_API_KEY
+        base_url: https://generativelanguage.googleapis.com/v1beta/openai
+        max_tokens: 32768
+      - provider: openai
+        model: gemini-2.5-flash
+        api_key_env: GOOGLE_API_KEY
+        base_url: https://generativelanguage.googleapis.com/v1beta/openai
+        max_tokens: 32768
+      - provider: anthropic
+        model: glm-5.1
+        api_key_env: ZHIPU_API_KEY
+        base_url: https://open.bigmodel.cn/api/anthropic
+        max_tokens: 8192
+      - provider: anthropic
+        model: claude-sonnet-4-5-20250929
+        api_key_env: ANTHROPIC_API_KEY
+        max_tokens: 8192
+
+  # ────────────────────────────────────────────────────────────────
+  # classification-light — short outputs, simple schemas
+  # ────────────────────────────────────────────────────────────────
+  classification-light:
+    description: |
+      TriageAgent, NotifierAgent, RetrieveAgent — output is a single
+      label or short structured response. Cheapest models OK; M2.7
+      reliably handles these.
+    avoid_models: []
+    recommended:
+      - provider: openai
+        model: gemini-2.5-flash
+        api_key_env: GOOGLE_API_KEY
+        base_url: https://generativelanguage.googleapis.com/v1beta/openai
+        max_tokens: 8192
+      - provider: anthropic
+        model: m2.7
+        api_key_env: MINIMAX_API_KEY
+        base_url: https://api.minimax.io/anthropic
+        max_tokens: 4096
+      - provider: anthropic
+        model: glm-5.1
+        api_key_env: ZHIPU_API_KEY
+        base_url: https://open.bigmodel.cn/api/anthropic
+        max_tokens: 4096
+
+# ────────────────────────────────────────────────────────────────
+# Agent category → tier mapping
+# ────────────────────────────────────────────────────────────────
+# Categories come from agent_manifest.yaml `category:` field. Categories
+# not listed here fall back to `planning-medium` (the safe default).
+
+category_to_tier:
+  codegen: codegen-strong
+  fast-codegen: codegen-strong
+  code: codegen-strong
+  writer: codegen-strong
+  migration: codegen-strong
+  reasoning: planning-medium
+  ops: planning-medium
+  compliance: review-medium
+  security-analysis: review-medium
+  cost-optimized: classification-light
+  triage: classification-light
+  classification: classification-light
+
+# ────────────────────────────────────────────────────────────────
+# Per-genesis-agent tier override (overrides category mapping)
+# ────────────────────────────────────────────────────────────────
+# Genesis agents have specific behavior we want to pin regardless of
+# their declared category. Architect and Builder are codegen-strong
+# because their output schemas are the heaviest in the pipeline.
+
+genesis_step_tiers:
+  _genesis/AgentArchitectAgent/v2: codegen-strong
+  _genesis/AgentArchitectAgent/v1: codegen-strong
+  _genesis/AgentBuilderAgent/v1: codegen-strong
+  _genesis/SourceScannerAgent/v1: planning-medium
+  _genesis/KnowledgeMapperAgent/v1: planning-medium
+  _genesis/ConflictResolverAgent/v1: planning-medium
+  _genesis/ContextEngineerAgent/v1: planning-medium
+  _genesis/ContextVerifierAgent/v1: planning-medium
+  _genesis/ToolDiscoveryAgent/v1: planning-medium
+  _genesis/ToolSynthesizerAgent/v1: planning-medium
+  _genesis/QualityGateAgent/v1: review-medium
+  _genesis/BestPracticeAdvisorAgent/v1: review-medium
+  _genesis/BestPracticeResearchAgent/v1: planning-medium

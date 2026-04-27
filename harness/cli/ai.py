@@ -387,6 +387,73 @@ def publish(path: str, ver: str, owner: str) -> None:
     click.echo(f"  entry: {result['entry_path']}")
 
 
+# ── providers ─────────────────────────────────────────────────────────────
+
+
+@cli.group()
+def providers() -> None:
+    """Inspect model-tier coverage + per-agent provider auto-resolution."""
+
+
+@providers.command("status")
+@click.option("--domain", "domain_path", default=None,
+              help="Domain root — if it has config/model_tiers.yaml, override is loaded.")
+def providers_status(domain_path: str | None) -> None:
+    """Show which model tiers your current credentials cover.
+
+    Output: per-tier `covered_by` (the model the auto-resolver would pick)
+    + a list of env vars you'd need to set for full coverage. Run this
+    BEFORE `./ai genesis build` so you don't discover mid-pipeline that
+    no model is configured for the codegen-strong tier.
+    """
+    from harness.core.provider_resolver import coverage_report, load_tiers
+
+    tiers_doc = load_tiers(domain_root=domain_path)
+    rep = coverage_report(tiers_doc=tiers_doc)
+    click.echo("Model-tier coverage")
+    click.echo("=" * 60)
+    for tier_name, info in rep["tiers"].items():
+        marker = "✓" if info["covered_by"] else "✗"
+        covered = info["covered_by"] or "(no creds)"
+        click.echo(f"  {marker} {tier_name:24s} → {covered}")
+        if not info["covered_by"]:
+            for env in info["missing_envs"][:3]:
+                click.echo(f"      try: export {env}=...")
+    click.echo("")
+    if rep["missing_for_full"]:
+        click.echo(f"Missing for full coverage: {', '.join(rep['missing_for_full'])}")
+    else:
+        click.echo("All tiers covered. Genesis + domain agents will route automatically.")
+
+
+@providers.command("resolve")
+@click.argument("agent_id_or_category")
+@click.option("--domain", "domain_path", default=None)
+def providers_resolve(agent_id_or_category: str, domain_path: str | None) -> None:
+    """Show which model the resolver would assign to a given agent/category.
+
+    AGENT_ID_OR_CATEGORY: either ``_genesis/AgentBuilderAgent/v1`` (full id)
+    or a category name like ``codegen``.
+    """
+    from harness.core.provider_resolver import load_tiers, resolve_provider_for_agent
+
+    tiers_doc = load_tiers(domain_root=domain_path)
+    is_agent_id = "/" in agent_id_or_category
+    spec = resolve_provider_for_agent(
+        agent_id=agent_id_or_category if is_agent_id else None,
+        category=None if is_agent_id else agent_id_or_category,
+        tiers_doc=tiers_doc,
+    )
+    if spec is None:
+        click.echo(f"  No provider resolves for '{agent_id_or_category}'.")
+        click.echo("  Either category isn't registered or no recommended model has creds set.")
+        click.echo("  Run `./ai providers status` to see which env vars to set.")
+        return
+    click.echo(f"Resolved provider for '{agent_id_or_category}':")
+    for k, v in spec.items():
+        click.echo(f"  {k}: {v}")
+
+
 # ── run ───────────────────────────────────────────────────────────────────
 
 

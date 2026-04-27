@@ -254,6 +254,39 @@ def _normalize_agent_manifest_schema(path: str, content: str) -> str:
             }
         changed = True
 
+    # --- Drift 0aa: missing provider block — auto-resolve from tier registry ---
+    # When the LLM omits `provider:` (Gemini Flash often does for non-codegen
+    # agents), pick a tier-appropriate model from config/model_tiers.yaml.
+    # Code-writing agents will get Claude/GLM (codegen-strong); triage agents
+    # get Gemini Flash / M2.7 (classification-light); etc. Writes only when
+    # creds are available — otherwise leaves the manifest's domain-default
+    # provider intact (caller still works, just at the domain-wide model).
+    # Marked with `_resolved_tier` so humans can spot framework picks.
+    # Disable globally with GENTCORE_AUTO_PROVIDER=0.
+    import os as _os
+    if (
+        "provider" not in data
+        and _os.environ.get("GENTCORE_AUTO_PROVIDER", "1") != "0"
+    ):
+        try:
+            from harness.core.provider_resolver import (
+                load_tiers, resolve_provider_for_agent,
+            )
+            tiers_doc = load_tiers()
+            agent_id = data.get("id")
+            spec = resolve_provider_for_agent(
+                agent_id=str(agent_id) if agent_id else None,
+                category=str(data.get("category") or ""),
+                tiers_doc=tiers_doc,
+            )
+            if spec is not None:
+                data["provider"] = spec
+                changed = True
+        except Exception:
+            # Resolver unavailable (e.g. registry malformed) — silently skip.
+            # Domain-default provider still applies at runtime.
+            pass
+
     # --- Drift 0a: missing system_prompt_ref ---
     # AgentManifest declares this as REQUIRED. MiniMax M2.7 commonly omits
     # it in roster output; Pydantic then fails the manifest at load time.

@@ -227,6 +227,101 @@ output_schema:
         assert parsed["output_schema"]["required"] == ["result"]
 
 
+class TestAutoProviderResolution:
+    """Drift 0aa — when manifest has no `provider:` block, normalizer injects
+    a tier-appropriate one from config/model_tiers.yaml + available creds.
+
+    Disabled with GENTCORE_AUTO_PROVIDER=0 so existing deterministic flows
+    aren't perturbed.
+    """
+
+    def test_codegen_agent_gets_codegen_strong_provider(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Force ANTHROPIC_API_KEY available, others absent
+        for v in ("GOOGLE_API_KEY", "ZHIPU_API_KEY", "MINIMAX_API_KEY"):
+            monkeypatch.delenv(v, raising=False)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        monkeypatch.delenv("GENTCORE_AUTO_PROVIDER", raising=False)
+
+        manifest_yaml = """
+id: test/CodeWriter/v1
+domain: test
+category: codegen
+system_prompt_ref: system_prompt.md
+"""
+        out = HOOKS._normalize_agent_manifest_schema(
+            "agents/CodeWriter/v1/agent_manifest.yaml", manifest_yaml
+        )
+        parsed = yaml.safe_load(out)
+        prov = parsed.get("provider")
+        assert prov is not None, "auto-provider must inject when none present"
+        assert prov["provider"] == "anthropic"
+        assert "claude" in prov["model"].lower()
+        assert prov["_resolved_tier"] == "codegen-strong"
+
+    def test_existing_provider_block_left_alone(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Hand-set or LLM-emitted provider blocks must NOT be overwritten."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        manifest_yaml = """
+id: test/CodeWriter/v1
+domain: test
+category: codegen
+system_prompt_ref: system_prompt.md
+provider:
+  provider: openai
+  model: my-custom-model
+  api_key_env: MY_KEY
+"""
+        out = HOOKS._normalize_agent_manifest_schema(
+            "agents/CodeWriter/v1/agent_manifest.yaml", manifest_yaml
+        )
+        parsed = yaml.safe_load(out)
+        assert parsed["provider"]["model"] == "my-custom-model"
+        assert "_resolved_tier" not in parsed["provider"]
+
+    def test_disabled_via_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """GENTCORE_AUTO_PROVIDER=0 fully opts out — for users who want
+        every agent to use the domain-wide default provider."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        monkeypatch.setenv("GENTCORE_AUTO_PROVIDER", "0")
+        manifest_yaml = """
+id: test/CodeWriter/v1
+domain: test
+category: codegen
+system_prompt_ref: system_prompt.md
+"""
+        out = HOOKS._normalize_agent_manifest_schema(
+            "agents/CodeWriter/v1/agent_manifest.yaml", manifest_yaml
+        )
+        parsed = yaml.safe_load(out)
+        assert "provider" not in parsed
+
+    def test_no_creds_no_provider_block(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When no recommended model has creds set, leave the manifest
+        clean — caller falls back to domain-default provider at runtime."""
+        for v in ("ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "ZHIPU_API_KEY",
+                  "MINIMAX_API_KEY"):
+            monkeypatch.delenv(v, raising=False)
+        monkeypatch.delenv("GENTCORE_AUTO_PROVIDER", raising=False)
+
+        manifest_yaml = """
+id: test/CodeWriter/v1
+domain: test
+category: codegen
+system_prompt_ref: system_prompt.md
+"""
+        out = HOOKS._normalize_agent_manifest_schema(
+            "agents/CodeWriter/v1/agent_manifest.yaml", manifest_yaml
+        )
+        parsed = yaml.safe_load(out)
+        assert "provider" not in parsed
+
+
 class TestSystemPromptRefAndCodegenSchema:
     """Drift 0a + Drift 0b code-aware — additional tier-2-model gaps."""
 
