@@ -7,6 +7,50 @@ from typing import Any, AsyncIterator
 from harness.providers.base_provider import BaseProvider, LLMResponse, LLMChunk
 
 
+def _is_transient_error(exc: Exception) -> bool:
+    """True when ``exc`` looks like a transient API blip worth retrying.
+
+    Detects: HTTP 5xx, 429 (rate limit), 408 (timeout), and BigModel-specific
+    "网络错误" 4xx codes that GLM-5.1/MiniMax intermittently return mid-call.
+    NOT transient: 401/403 auth errors, schema mismatches, malformed inputs,
+    or any error message that names a permanent problem.
+    """
+    msg = str(exc)
+    msg_lower = msg.lower()
+
+    # Anthropic SDK exposes status_code on its APIError subclasses.
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        if status >= 500 or status == 429 or status == 408:
+            return True
+        # 401/403/404 are NOT transient — fail fast.
+        if status in (401, 403, 404):
+            return False
+        # Other 4xx: only transient if the body says so (BigModel quirk).
+
+    # Vendor-specific transient signals in error message body.
+    transient_markers = (
+        "网络错误",          # BigModel/GLM "network error"
+        "请稍后重试",         # BigModel "please retry later"
+        "timeout",
+        "timed out",
+        "connection reset",
+        "connection refused",
+        "rate limit",
+        "ratelimit",
+        "service unavailable",
+        "bad gateway",
+        "gateway timeout",
+        "internal server error",
+        "temporarily unavailable",
+        "overloaded",
+    )
+    if any(marker in msg_lower or marker in msg for marker in transient_markers):
+        return True
+
+    return False
+
+
 class AnthropicProvider(BaseProvider):
     """Anthropic Claude provider.
 
@@ -171,7 +215,36 @@ class AnthropicProvider(BaseProvider):
 
         create_kwargs.update(kwargs)
 
-        response = client.messages.create(**create_kwargs)
+        # Transient-error retry: BigModel-fronted vendors (GLM-5.1, MiniMax)
+        # intermittently return 5xx and "network error" 4xx codes that succeed
+        # on a fresh attempt seconds later. A single un-retried blip kills the
+        # genesis pipeline (the failing step's gate hits max_retries with the
+        # same blip each time). Three attempts with 1s/2s backoff covers the
+        # observed transient window without hiding real failures (auth, etc.).
+        import asyncio as _asyncio
+        import logging as _logging
+        _provider_log = _logging.getLogger(__name__)
+        last_exc: Exception | None = None
+        response = None
+        for attempt in range(3):
+            try:
+                response = client.messages.create(**create_kwargs)
+                break
+            except Exception as exc:
+                if not _is_transient_error(exc) or attempt == 2:
+                    raise
+                backoff = 1.0 * (2 ** attempt)  # 1s, 2s
+                _provider_log.warning(
+                    "anthropic.messages.create transient error (attempt %d/3): %s; "
+                    "retrying in %.1fs",
+                    attempt + 1, str(exc)[:200], backoff,
+                )
+                last_exc = exc
+                await _asyncio.sleep(backoff)
+        # Should be unreachable — the loop either breaks with `response` set
+        # or re-raises the last exception. Defensive guard for type-checker.
+        if response is None:
+            raise last_exc or RuntimeError("anthropic.messages.create returned None")
 
         # Parse response
         content = ""

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from harness.providers.anthropic_provider import AnthropicProvider
+from harness.providers.anthropic_provider import AnthropicProvider, _is_transient_error
 
 
 class _FakeContentBlock:
@@ -88,6 +88,128 @@ async def test_forced_mode_only_submit_output_tool() -> None:
     assert parsed == {"summary": "all good", "score": 0.9}
     assert resp.tool_calls == []
     assert resp.raw["submit_output_fired"] is True
+
+
+class TestIsTransientError:
+    """Provider-level retry classifier — what should auto-retry vs fail-fast."""
+
+    def test_5xx_status_is_transient(self) -> None:
+        exc = type("FakeAPIErr", (Exception,), {"status_code": 503})("Service Unavailable")
+        assert _is_transient_error(exc) is True
+
+    def test_500_status_is_transient(self) -> None:
+        exc = type("FakeAPIErr", (Exception,), {"status_code": 500})("Internal Server Error")
+        assert _is_transient_error(exc) is True
+
+    def test_429_rate_limit_is_transient(self) -> None:
+        exc = type("FakeAPIErr", (Exception,), {"status_code": 429})("Rate Limited")
+        assert _is_transient_error(exc) is True
+
+    def test_408_timeout_is_transient(self) -> None:
+        exc = type("FakeAPIErr", (Exception,), {"status_code": 408})("Timeout")
+        assert _is_transient_error(exc) is True
+
+    def test_401_auth_is_NOT_transient(self) -> None:
+        exc = type("FakeAPIErr", (Exception,), {"status_code": 401})("Unauthorized")
+        assert _is_transient_error(exc) is False
+
+    def test_403_forbidden_is_NOT_transient(self) -> None:
+        exc = type("FakeAPIErr", (Exception,), {"status_code": 403})("Forbidden")
+        assert _is_transient_error(exc) is False
+
+    def test_bigmodel_chinese_network_error_is_transient(self) -> None:
+        """Real failure mode observed in genesis: BigModel returns HTTP 400
+        with Chinese 网络错误 (network error) message — must be retried."""
+        exc = RuntimeError("Error code: 400 - {'message': '网络错误，错误id：xxx，请稍后重试'}")
+        assert _is_transient_error(exc) is True
+
+    def test_english_timeout_text_is_transient(self) -> None:
+        assert _is_transient_error(RuntimeError("Connection timed out")) is True
+        assert _is_transient_error(RuntimeError("Read timeout")) is True
+
+    def test_overloaded_text_is_transient(self) -> None:
+        assert _is_transient_error(RuntimeError("Server overloaded")) is True
+
+    def test_schema_mismatch_is_NOT_transient(self) -> None:
+        """Permanent errors must not loop — must surface so caller fixes input."""
+        assert _is_transient_error(ValueError("Invalid input_schema for tool")) is False
+
+    def test_random_error_is_NOT_transient(self) -> None:
+        assert _is_transient_error(KeyError("missing key")) is False
+
+
+@pytest.mark.asyncio
+async def test_provider_retries_on_transient_then_succeeds() -> None:
+    """Wraps client.messages.create with up-to-3 attempts on transient errors.
+    Pre-fix a single GLM 500 mid-genesis killed the whole pipeline."""
+
+    class _FlakyClient:
+        def __init__(self, fail_count: int, response: _FakeResponse) -> None:
+            self._fail_remaining = fail_count
+            self._response = response
+            self.attempts = 0
+            self.messages = self
+
+        def create(self, **_: Any) -> _FakeResponse:
+            self.attempts += 1
+            if self._fail_remaining > 0:
+                self._fail_remaining -= 1
+                err = type("FakeAPIErr", (Exception,), {"status_code": 500})(
+                    "Internal Server Error"
+                )
+                raise err
+            return self._response
+
+    good_response = _FakeResponse([
+        _FakeContentBlock(tool_use={
+            "id": "tu_1", "name": "submit_output",
+            "input": {"summary": "ok"},
+        }),
+    ])
+    fake = _FlakyClient(fail_count=2, response=good_response)
+    prov = AnthropicProvider(api_key="test", model="claude-sonnet-4-6-20250414")
+    prov._client = fake
+
+    # Patch sleep so the test doesn't actually wait 3 seconds.
+    import harness.providers.anthropic_provider as _mod
+    orig_sleep = _mod.__dict__.get("asyncio")
+    # Easier: monkeypatch asyncio.sleep at module scope before await
+    import asyncio as _asyncio
+    _orig = _asyncio.sleep
+
+    async def _fast_sleep(_: float) -> None:
+        return None
+
+    _asyncio.sleep = _fast_sleep  # type: ignore[assignment]
+    try:
+        resp = await prov.chat([{"role": "user", "content": "x"}], output_schema=OUTPUT_SCHEMA)
+    finally:
+        _asyncio.sleep = _orig  # type: ignore[assignment]
+
+    assert fake.attempts == 3  # 2 transient + 1 success
+    assert json.loads(resp.content) == {"summary": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_provider_does_NOT_retry_on_permanent_error() -> None:
+    """401/403 etc. must surface immediately, not loop 3 times."""
+
+    class _AuthFailClient:
+        def __init__(self) -> None:
+            self.attempts = 0
+            self.messages = self
+
+        def create(self, **_: Any) -> Any:
+            self.attempts += 1
+            err = type("FakeAPIErr", (Exception,), {"status_code": 401})("Unauthorized")
+            raise err
+
+    fake = _AuthFailClient()
+    prov = AnthropicProvider(api_key="test", model="claude-sonnet-4-6-20250414")
+    prov._client = fake
+    with pytest.raises(Exception):
+        await prov.chat([{"role": "user", "content": "x"}], output_schema=OUTPUT_SCHEMA)
+    assert fake.attempts == 1  # no retry on auth failure
 
 
 @pytest.mark.asyncio

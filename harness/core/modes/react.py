@@ -38,6 +38,61 @@ def _satisfies_schema_shape(text: str, schema: dict | None) -> bool:
     return True
 
 
+def _minimal_example_for_schema(schema: dict | None) -> dict:
+    """Build a minimal example object that satisfies `schema`'s required fields.
+
+    Used by schema-coerce retries to give weak-instruct vendors (GLM, MiniMax)
+    a concrete shape they can copy from instead of just describing the schema.
+    Vendors observed emitting `submit_output({})` after tool_choice forcing —
+    a valid tool call with empty args. Showing them a concrete example
+    bypasses that failure mode.
+
+    Per-type defaults are minimal-but-valid:
+      - object       → recurse into required properties
+      - array        → empty list (or single example item if items.required)
+      - string       → "..."
+      - integer/number → 0
+      - boolean      → false
+      - enum         → first enum value
+    """
+    if not isinstance(schema, dict):
+        return {}
+    schema_type = schema.get("type")
+    if schema_type == "object":
+        out: dict = {}
+        props = schema.get("properties") or {}
+        for key in schema.get("required") or []:
+            sub = props.get(key, {"type": "string"})
+            out[key] = _minimal_example_for_value(sub)
+        return out
+    return {}
+
+
+def _minimal_example_for_value(schema: dict) -> Any:
+    """Sibling of `_minimal_example_for_schema` for non-root values."""
+    if not isinstance(schema, dict):
+        return None
+    enum = schema.get("enum")
+    if enum:
+        return enum[0]
+    schema_type = schema.get("type")
+    if schema_type == "object":
+        return _minimal_example_for_schema(schema)
+    if schema_type == "array":
+        items = schema.get("items") or {}
+        if isinstance(items, dict) and items.get("required"):
+            # Show one example item so the model knows the shape.
+            return [_minimal_example_for_value(items)]
+        return []
+    if schema_type == "string":
+        return "..."
+    if schema_type in ("integer", "number"):
+        return 0
+    if schema_type == "boolean":
+        return False
+    return None
+
+
 def _estimate_message_tokens(messages: list[dict[str, Any]]) -> int:
     """Cheap chars/4 estimate of total tokens across a message list.
 
@@ -483,21 +538,105 @@ class ReActStrategy(ExecutionStrategy):
                     and (not _is_json_like(content) or not _satisfies_schema_shape(content, output_schema))
                 )
                 if needs_coerce:
-                    import json
-                    schema_hint = (
-                        f"\n\nYour output MUST be a JSON object matching this schema:\n"
-                        f"```json\n{json.dumps(output_schema, indent=2)}\n```\n"
-                        "Output JSON only."
-                    )
+                    import json as _json
+                    import logging as _logging
+                    _coerce_log = _logging.getLogger(__name__)
+                    # Multi-attempt schema-coerce: weak-instruct vendors
+                    # (GLM-5.1, MiniMax) commonly fire submit_output({}) on
+                    # the first coerce — a valid tool call with empty args.
+                    # Progressive escalation: schema → schema+missing-list →
+                    # schema+missing-list+concrete-example. Stops as soon as
+                    # the response satisfies required-field shape.
+                    required = (output_schema or {}).get("required") or []
+                    example = _minimal_example_for_schema(output_schema)
+                    coerce_prompts = [
+                        # Attempt 1: same as legacy — gentle restate
+                        (
+                            "Reformat your answer as JSON.\n\n"
+                            f"Your output MUST be a JSON object matching this schema:\n"
+                            f"```json\n{_json.dumps(output_schema, indent=2)}\n```\n"
+                            "Output JSON only."
+                        ),
+                        # Attempt 2: explicit missing-fields callout
+                        (
+                            "Your previous response was empty or missing required "
+                            f"fields. The schema requires ALL of: {required}. "
+                            "You MUST populate every required field with realistic "
+                            "values inferred from the conversation context. "
+                            "Do NOT return an empty object. "
+                            f"Schema:\n```json\n{_json.dumps(output_schema, indent=2)}\n```\n"
+                            "Reply with the JSON object only — no prose, no fences."
+                        ),
+                        # Attempt 3: concrete copy-from example + last-chance
+                        (
+                            "FINAL ATTEMPT. Your previous responses were empty.\n"
+                            "Here is a CONCRETE EXAMPLE matching the required shape:\n"
+                            f"```json\n{_json.dumps(example, indent=2)}\n```\n"
+                            "Replace the placeholder values with realistic values "
+                            "synthesized from the prior conversation. Every required "
+                            f"field ({required}) must be present and non-empty. "
+                            "Output the JSON object only."
+                        ),
+                    ]
+                    coerce_attempts = 0
+                    coerce_api_errors = 0
+                    coerce_succeeded = False
                     current_messages.append({"role": "assistant", "content": content})
-                    current_messages.append({"role": "user", "content": f"Reformat your answer as JSON.{schema_hint}"})
-                    try:
-                        schema_response = await provider.chat(current_messages, output_schema=output_schema)
-                        content = _resp_get(schema_response, "content", content)
-                        total_tokens += _resp_get(schema_response, "tokens_used", 0)
-                        steps.append({"step": step_num + 2, "type": "schema_coerce", "content": content})
-                    except Exception:
-                        pass
+                    for prompt in coerce_prompts:
+                        coerce_attempts += 1
+                        current_messages.append({"role": "user", "content": prompt})
+                        try:
+                            schema_response = await provider.chat(
+                                current_messages, output_schema=output_schema
+                            )
+                            new_content = _resp_get(schema_response, "content", "")
+                            total_tokens += _resp_get(schema_response, "tokens_used", 0)
+                            steps.append({
+                                "step": step_num + 1 + coerce_attempts,
+                                "type": "schema_coerce",
+                                "attempt": coerce_attempts,
+                                "content": new_content,
+                            })
+                            if _satisfies_schema_shape(new_content, output_schema):
+                                content = new_content
+                                coerce_succeeded = True
+                                break
+                            # Persist assistant turn so retry sees it
+                            current_messages.append({"role": "assistant", "content": new_content})
+                            content = new_content  # carry forward for return
+                        except Exception as _exc:
+                            # Transient API errors (GLM/MiniMax via BigModel
+                            # occasionally return 400/500 mid-coerce) must NOT
+                            # abort the escalation — each prompt is independent
+                            # and the next stronger prompt may still succeed.
+                            # Pop the just-appended user message so the message
+                            # list stays consistent for subsequent attempts.
+                            coerce_api_errors += 1
+                            if current_messages and current_messages[-1].get("role") == "user":
+                                current_messages.pop()
+                            _coerce_log.warning(
+                                "schema_coerce attempt %d hit transient error: %s",
+                                coerce_attempts, _exc,
+                            )
+                            steps.append({
+                                "step": step_num + 1 + coerce_attempts,
+                                "type": "schema_coerce_error",
+                                "attempt": coerce_attempts,
+                                "error": str(_exc)[:300],
+                            })
+                            continue
+                    if coerce_succeeded:
+                        _coerce_log.info(
+                            "schema_coerce recovered empty/invalid output on attempt %d "
+                            "(api_errors=%d)",
+                            coerce_attempts, coerce_api_errors,
+                        )
+                    else:
+                        _coerce_log.warning(
+                            "schema_coerce exhausted %d attempts (api_errors=%d); "
+                            "final content[:200]=%r",
+                            coerce_attempts, coerce_api_errors, (content or "")[:200],
+                        )
                 result: dict[str, Any] = {
                     "content": content,
                     "tool_calls": [],
