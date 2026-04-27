@@ -47,6 +47,10 @@ class DetectedVendor:
     live_verified: bool | None = None
     live_error: str | None = None
     live_models_count: int | None = None
+    # Populated when the live catalog is fetched + diffed (refresh=True)
+    live_models: list[str] = field(default_factory=list)
+    new_models: list[dict[str, Any]] = field(default_factory=list)
+    removed_models: list[str] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -195,6 +199,111 @@ def _verify_live(
 # ────────────────────────────────────────────────────────────────
 # Project to resolver-compatible specs
 # ────────────────────────────────────────────────────────────────
+
+
+def refresh_models(
+    *, env: dict[str, str] | None = None, timeout: float = 8.0
+) -> list[DetectedVendor]:
+    """Fetch live model catalogs from each detected vendor and diff against
+    the registry's known list. Newly-discovered models get auto-classified
+    via :mod:`model_inferer` so they're routable through the resolver
+    immediately, before the user manually edits ``known_vendors.yaml``.
+
+    Used by ``./ai providers refresh`` to surface staleness — when Anthropic
+    ships claude-opus-4-7 in three months, this is what tells the user.
+
+    For each vendor:
+      • static-detect (env vars + key patterns)
+      • if list_models_url set → GET it, parse model IDs
+      • diff live IDs against ``known_vendors.yaml`` ``models[]``
+      • for each NEW id → call :func:`model_inferer.infer_recommended_spec`
+        to get a tier-classified spec (with ``_inferred: True`` flag)
+
+    Returns:
+        Same shape as :func:`detect_vendors`, but each record carries
+        ``live_models`` (full live catalog), ``new_models`` (auto-classified
+        candidates for registry promotion), and ``removed_models`` (models
+        that disappeared from the vendor's published list).
+    """
+    if env is None:
+        env = dict(os.environ)
+    detected = detect_vendors(env=env, verify=False)
+    for v in detected:
+        if not v.list_models_url:
+            continue
+        live_ids = _fetch_live_model_ids(v, env, timeout=timeout)
+        if live_ids is None:
+            v.live_error = "fetch failed"
+            continue
+        v.live_verified = True
+        v.live_models = live_ids
+        v.live_models_count = len(live_ids)
+        known_ids = [str(m.get("model")) for m in v.models if isinstance(m, dict)]
+        from harness.core.model_inferer import diff_known_vs_live, infer_recommended_spec
+        diff = diff_known_vs_live(known=known_ids, live=live_ids)
+        v.removed_models = diff["removed"]
+        # Build vendor dict shape for the inferer
+        vendor_for_inferer = {
+            "provider_class": v.provider_class,
+            "base_url": v.base_url,
+            "env_vars": v.env_vars,
+        }
+        v.new_models = [
+            infer_recommended_spec(model_id=mid, vendor=vendor_for_inferer)
+            for mid in diff["new"]
+        ]
+    return detected
+
+
+def _fetch_live_model_ids(
+    vendor: DetectedVendor, env: dict[str, str], timeout: float
+) -> list[str] | None:
+    """GET the vendor's list_models_url, return list of model IDs.
+
+    Handles two response shapes the registry expects:
+      • OpenAI-shaped: ``{"data": [{"id": "..."}, ...]}``
+      • Google-shaped: ``{"models": [{"name": "models/..."}, ...]}``
+    Returns ``None`` on any failure (caller surfaces as live_error).
+    """
+    if not vendor.list_models_url or not vendor.env_vars:
+        return None
+    url = vendor.list_models_url
+    primary_env = vendor.env_vars[0]
+    key_in_url = "${KEY}" in url
+    if key_in_url:
+        url = url.replace("${KEY}", env.get(primary_env, ""))
+    headers: dict[str, str] = {}
+    if not key_in_url:
+        if vendor.vendor.startswith("anthropic"):
+            headers["x-api-key"] = env.get(primary_env, "")
+            headers["anthropic-version"] = "2023-06-01"
+        else:
+            headers["Authorization"] = f"Bearer {env.get(primary_env, '')}"
+    try:
+        import json as _json
+        import urllib.request
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            if resp.status >= 400:
+                return None
+            body = _json.loads(resp.read().decode("utf-8", errors="replace"))
+        ids: list[str] = []
+        # OpenAI / Anthropic / Moonshot / DeepSeek / OpenRouter shape
+        if isinstance(body, dict) and isinstance(body.get("data"), list):
+            for item in body["data"]:
+                if isinstance(item, dict) and item.get("id"):
+                    ids.append(str(item["id"]))
+        # Google shape
+        elif isinstance(body, dict) and isinstance(body.get("models"), list):
+            for item in body["models"]:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "")
+                # Google returns `models/<id>` — strip the prefix
+                ids.append(name.split("/", 1)[-1] if "/" in name else name)
+        return ids
+    except Exception:
+        return None
 
 
 def detected_vendors_to_recommended_specs(

@@ -488,6 +488,89 @@ def providers_detect(live: bool, domain_path: str | None) -> None:
         click.echo(f"  {marker} {tier_name:24s} → {covered}")
 
 
+@providers.command("refresh")
+@click.option("--apply", is_flag=True, default=False,
+              help="Write discovered models to <domain>/config/known_vendors_updates.yaml.")
+@click.option("--domain", "domain_path", default=None,
+              help="Domain root for layered tier registry.")
+def providers_refresh(apply: bool, domain_path: str | None) -> None:
+    """Pull live model catalogs from each detected vendor + auto-classify
+    newly-published models the registry doesn't know about yet.
+
+    This is how you keep up with new releases (claude-opus-4-7,
+    gpt-6, gemini-3.5-flash, …) without waiting for a framework update.
+    Each new model gets a tier-hint inferred from its name (opus → strong,
+    haiku → medium, lite → light) so the resolver can route to it
+    immediately.
+
+    Without --apply, output is read-only — review the suggestions, then
+    re-run with --apply to write them under <domain>/config/.
+    """
+    from harness.core.provider_detector import refresh_models
+
+    detected = refresh_models()
+    any_changes = False
+    click.echo("Live-catalog refresh")
+    click.echo("=" * 70)
+    for v in detected:
+        if not v.list_models_url:
+            click.echo(f"  ⃝ {v.vendor:20s} (no list endpoint — registry-only)")
+            continue
+        if v.live_error:
+            click.echo(f"  ⚠ {v.vendor:20s} {v.live_error}")
+            continue
+        new_count = len(v.new_models)
+        rem_count = len(v.removed_models)
+        if not new_count and not rem_count:
+            click.echo(f"  ✓ {v.vendor:20s} {v.live_models_count} models, all known")
+            continue
+        any_changes = True
+        click.echo(f"  ◆ {v.vendor:20s} {v.live_models_count} live models, "
+                   f"{new_count} new, {rem_count} removed")
+        for spec in v.new_models[:10]:
+            click.echo(f"      + {spec['model']:50s} → {spec['_tier_hint']} ({spec['_family']})")
+        if new_count > 10:
+            click.echo(f"      … {new_count - 10} more (run with --apply to write all)")
+        for rm in v.removed_models[:5]:
+            click.echo(f"      - {rm}  (no longer in vendor catalog)")
+    click.echo("")
+    if not any_changes:
+        click.echo("Registry is current — no new models discovered.")
+        return
+    if not apply:
+        click.echo("Run with --apply to persist these to "
+                   f"{(domain_path or '.')}/config/known_vendors_updates.yaml")
+        return
+    # --apply: write the auto-classified specs to a side-car file the
+    # framework loads alongside known_vendors.yaml
+    out_path = (
+        Path(domain_path) / "config" / "known_vendors_updates.yaml"
+        if domain_path else Path("config/known_vendors_updates.yaml")
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "_generated_by": "ai providers refresh",
+        "_generated_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+        "discovered_models": [
+            {
+                "vendor": v.vendor,
+                "new": [
+                    {
+                        "model": s["model"],
+                        "tier_hint": s.get("_tier_hint"),
+                        "family": s.get("_family"),
+                    }
+                    for s in v.new_models
+                ],
+                "removed": v.removed_models,
+            }
+            for v in detected if v.new_models or v.removed_models
+        ],
+    }
+    out_path.write_text(__import__("yaml").safe_dump(payload, sort_keys=False))
+    click.echo(f"Wrote {out_path} — review + merge into known_vendors.yaml manually.")
+
+
 @providers.command("resolve")
 @click.argument("agent_id_or_category")
 @click.option("--domain", "domain_path", default=None)
