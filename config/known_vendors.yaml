@@ -1,0 +1,198 @@
+# Known LLM vendor registry — used by harness/core/provider_detector.py
+# to auto-detect which providers a user has wired up via environment vars.
+#
+# Each entry is a "vendor profile": one bundle of (env vars, key pattern,
+# wire-protocol shim, base URL, available models). Detection walks this
+# list and reports every vendor whose credentials look valid in the current
+# environment, then feeds the result into the tier resolver.
+#
+# Schema:
+#   vendor:          canonical id (used in CLI output + logs)
+#   description:     one-line human note
+#   env_vars:        list of env vars that MUST all be set + non-empty
+#   key_pattern:     regex on the FIRST env_var's value (optional —
+#                    disambiguates shared env-var names like OPENAI_API_KEY)
+#   key_anti_patterns: regexes that DISQUALIFY the key (e.g. sk-or- on
+#                    OPENAI_API_KEY means it's actually OpenRouter)
+#   provider_class:  shadow-gentcore provider — 'anthropic' | 'openai' |
+#                    'bedrock' | 'claudecode'
+#   base_url:        endpoint to point the SDK at (omitted for SDK defaults)
+#   list_models_url: optional GET endpoint that returns model IDs (used by
+#                    --live verification flag); ${KEY} placeholder substituted
+#   models:          list of {model, family, capability_hints?} this vendor
+#                    is known to expose. Used to populate the resolver
+#                    when this vendor is detected at runtime.
+#                    `family` matches model_hints.py classifier (claude /
+#                    glm / gemini-flash / gemini-pro-thinking / minimax /
+#                    gpt / kimi / deepseek / qwen) so prompt nudges fire.
+#   notes:           per-vendor caveats surfaced in `./ai providers detect`.
+
+vendors:
+
+  # ─────────────────────────────────────────────────────────────
+  # Direct vendors — uniquely identifiable by env var
+  # ─────────────────────────────────────────────────────────────
+
+  - vendor: anthropic-direct
+    description: "Anthropic Claude — direct API"
+    env_vars: [ANTHROPIC_API_KEY]
+    key_pattern: "^sk-ant-"
+    provider_class: anthropic
+    list_models_url: "https://api.anthropic.com/v1/models"
+    models:
+      - {model: claude-sonnet-4-5-20250929, family: claude, tier_hint: codegen-strong}
+      - {model: claude-opus-4-5-20251029,  family: claude, tier_hint: codegen-strong}
+      - {model: claude-haiku-4-5-20251001, family: claude, tier_hint: planning-medium}
+      - {model: claude-haiku-4-5,          family: claude, tier_hint: planning-medium}
+
+  - vendor: google-direct
+    description: "Google Gemini — direct API via OpenAI-compat shim"
+    env_vars: [GOOGLE_API_KEY]
+    key_pattern: "^AIza"
+    provider_class: openai
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
+    list_models_url: "https://generativelanguage.googleapis.com/v1beta/models?key=${KEY}"
+    models:
+      - {model: gemini-3-flash-preview,      family: gemini-flash, tier_hint: codegen-strong}
+      - {model: gemini-3.1-flash-lite-preview, family: gemini-flash, tier_hint: planning-medium}
+      - {model: gemini-3-pro-preview,        family: gemini-pro,   tier_hint: codegen-strong}
+      - {model: gemini-3.1-pro-preview,      family: gemini-pro,   tier_hint: codegen-strong}
+      - {model: gemini-2.5-flash,            family: gemini-flash, tier_hint: planning-medium}
+      - {model: gemini-2.5-pro,              family: gemini-pro,   tier_hint: codegen-strong}
+      - {model: gemini-flash-latest,         family: gemini-flash, tier_hint: planning-medium}
+      - {model: gemini-pro-latest,           family: gemini-pro,   tier_hint: codegen-strong}
+
+  - vendor: zhipu-glm
+    description: "Zhipu GLM via BigModel — Anthropic-compat gateway"
+    env_vars: [ZHIPU_API_KEY]
+    provider_class: anthropic
+    base_url: "https://open.bigmodel.cn/api/anthropic"
+    models:
+      - {model: glm-5.1, family: glm, tier_hint: codegen-strong}
+      - {model: glm-4.6, family: glm, tier_hint: planning-medium}
+      - {model: glm-4.5, family: glm, tier_hint: planning-medium}
+    notes: "Slow on long output (1-7min/call). Avoid `tools: []` agents (handled by framework)."
+
+  - vendor: minimax
+    description: "MiniMax M-series — Anthropic-compat gateway"
+    env_vars: [MINIMAX_API_KEY]
+    provider_class: anthropic
+    base_url: "https://api.minimax.io/anthropic"
+    models:
+      - {model: m2.7, family: minimax, tier_hint: classification-light}
+      - {model: m2,   family: minimax, tier_hint: classification-light}
+    notes: "AVOID for codegen — emits empty files-arrays. Good for triage / planning."
+
+  - vendor: moonshot-kimi
+    description: "Moonshot Kimi — OpenAI-compat"
+    env_vars: [MOONSHOT_API_KEY]
+    provider_class: openai
+    base_url: "https://api.moonshot.cn/v1"
+    list_models_url: "https://api.moonshot.cn/v1/models"
+    models:
+      - {model: moonshot-v1-128k, family: kimi, tier_hint: codegen-strong}
+      - {model: moonshot-v1-32k,  family: kimi, tier_hint: planning-medium}
+      - {model: moonshot-v1-8k,   family: kimi, tier_hint: classification-light}
+      - {model: kimi-k2,          family: kimi, tier_hint: codegen-strong}
+
+  - vendor: deepseek
+    description: "DeepSeek — OpenAI-compat"
+    env_vars: [DEEPSEEK_API_KEY]
+    provider_class: openai
+    base_url: "https://api.deepseek.com"
+    list_models_url: "https://api.deepseek.com/models"
+    models:
+      - {model: deepseek-chat,     family: deepseek, tier_hint: planning-medium}
+      - {model: deepseek-reasoner, family: deepseek, tier_hint: codegen-strong}
+      - {model: deepseek-coder,    family: deepseek, tier_hint: codegen-strong}
+
+  - vendor: qwen-dashscope
+    description: "Alibaba Qwen via DashScope — OpenAI-compat"
+    env_vars: [DASHSCOPE_API_KEY]
+    key_pattern: "^sk-"
+    provider_class: openai
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    models:
+      - {model: qwen-max,    family: qwen, tier_hint: codegen-strong}
+      - {model: qwen-plus,   family: qwen, tier_hint: planning-medium}
+      - {model: qwen-turbo,  family: qwen, tier_hint: classification-light}
+      - {model: qwen3-coder, family: qwen, tier_hint: codegen-strong}
+
+  # ─────────────────────────────────────────────────────────────
+  # Aggregators — single key, many models
+  # ─────────────────────────────────────────────────────────────
+
+  - vendor: openrouter
+    description: "OpenRouter aggregator — exposes 200+ models"
+    env_vars: [OPENROUTER_API_KEY]
+    key_pattern: "^sk-or-"
+    provider_class: openai
+    base_url: "https://openrouter.ai/api/v1"
+    list_models_url: "https://openrouter.ai/api/v1/models"
+    models:
+      - {model: "anthropic/claude-sonnet-4.5", family: claude, tier_hint: codegen-strong}
+      - {model: "anthropic/claude-opus-4.5",   family: claude, tier_hint: codegen-strong}
+      - {model: "openai/gpt-5",                family: gpt,    tier_hint: codegen-strong}
+      - {model: "openai/gpt-5.5",              family: gpt,    tier_hint: codegen-strong}
+      - {model: "google/gemini-3-flash-preview", family: gemini-flash, tier_hint: codegen-strong}
+      - {model: "deepseek/deepseek-coder",     family: deepseek, tier_hint: codegen-strong}
+      - {model: "moonshotai/kimi-k2",          family: kimi,    tier_hint: codegen-strong}
+    notes: "Aggregator — `models` here is a representative subset. Use ./ai providers detect --live to fetch the live catalog."
+
+  # ─────────────────────────────────────────────────────────────
+  # Cloud-provider-mediated — credentials via SDK chain
+  # ─────────────────────────────────────────────────────────────
+
+  - vendor: anthropic-bedrock
+    description: "AWS Bedrock — Claude via boto3 credentials chain"
+    env_vars: [AWS_PROFILE]  # or AWS_ACCESS_KEY_ID — see notes
+    provider_class: bedrock
+    models:
+      - {model: "anthropic.claude-sonnet-4-5-20250929-v1:0", family: claude, tier_hint: codegen-strong}
+      - {model: "anthropic.claude-opus-4-5-20251029-v1:0",   family: claude, tier_hint: codegen-strong}
+      - {model: "anthropic.claude-haiku-4-5-20251001-v1:0",  family: claude, tier_hint: planning-medium}
+    notes: "Detection via AWS_PROFILE alone is heuristic; AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY also works. Region from AWS_REGION (default us-east-1)."
+
+  - vendor: azure-openai
+    description: "Azure OpenAI Service"
+    env_vars: [AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT]
+    provider_class: openai
+    models:
+      - {model: "gpt-5",        family: gpt, tier_hint: codegen-strong}
+      - {model: "gpt-5-mini",   family: gpt, tier_hint: planning-medium}
+      - {model: "gpt-4o",       family: gpt, tier_hint: codegen-strong}
+    notes: "Deployment names are tenant-specific — set GENTCORE_AZURE_DEPLOYMENT to override the model id."
+
+  - vendor: google-vertex
+    description: "Google Vertex AI"
+    env_vars: [GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_VERTEX_PROJECT]
+    provider_class: openai
+    models:
+      - {model: "gemini-3-pro-preview",        family: gemini-pro,   tier_hint: codegen-strong}
+      - {model: "gemini-3-flash-preview",      family: gemini-flash, tier_hint: codegen-strong}
+      - {model: "gemini-2.5-pro",              family: gemini-pro,   tier_hint: codegen-strong}
+      - {model: "gemini-2.5-flash",            family: gemini-flash, tier_hint: planning-medium}
+    notes: "Service-account auth — GOOGLE_APPLICATION_CREDENTIALS points at the JSON key file."
+
+  # ─────────────────────────────────────────────────────────────
+  # OpenAI-direct — must run AFTER aggregators since OPENAI_API_KEY
+  # is the most-shared env var. key_anti_patterns disqualify it.
+  # ─────────────────────────────────────────────────────────────
+
+  - vendor: openai-direct
+    description: "OpenAI — direct API"
+    env_vars: [OPENAI_API_KEY]
+    key_pattern: "^sk-"
+    key_anti_patterns:
+      - "^sk-or-"   # OpenRouter
+      - "^sk-ant-"  # Anthropic (shouldn't be in OPENAI_API_KEY but let's be safe)
+    provider_class: openai
+    list_models_url: "https://api.openai.com/v1/models"
+    models:
+      - {model: "gpt-5",       family: gpt, tier_hint: codegen-strong}
+      - {model: "gpt-5.5",     family: gpt, tier_hint: codegen-strong}
+      - {model: "gpt-5-mini",  family: gpt, tier_hint: planning-medium}
+      - {model: "gpt-5-nano",  family: gpt, tier_hint: classification-light}
+      - {model: "gpt-4o",      family: gpt, tier_hint: codegen-strong}
+      - {model: "gpt-4o-mini", family: gpt, tier_hint: planning-medium}
+    notes: "If OPENAI_BASE_URL is set, this vendor entry is skipped — your key is routing through a different gateway."

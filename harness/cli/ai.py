@@ -426,6 +426,68 @@ def providers_status(domain_path: str | None) -> None:
         click.echo("All tiers covered. Genesis + domain agents will route automatically.")
 
 
+@providers.command("detect")
+@click.option("--live", is_flag=True, default=False,
+              help="Verify each detected vendor's key by hitting its list-models endpoint.")
+@click.option("--domain", "domain_path", default=None,
+              help="Domain root for layered tier registry.")
+def providers_detect(live: bool, domain_path: str | None) -> None:
+    """Detect which LLM vendors your environment is wired up for.
+
+    Walks ``config/known_vendors.yaml`` against your env vars + key
+    patterns. Output groups detected vendors by family and lists their
+    available models. With ``--live``, each vendor's list-models endpoint
+    is pinged to confirm the key authenticates (adds ~1-2s per vendor).
+
+    Use this BEFORE genesis to confirm every tier the resolver needs
+    has at least one capable provider available.
+    """
+    from harness.core.provider_detector import (
+        detect_vendors, load_known_vendors, merge_detected_into_tiers,
+    )
+    from harness.core.provider_resolver import coverage_report, load_tiers
+
+    detected = detect_vendors(verify=live)
+    if not detected:
+        click.echo("No LLM providers detected.")
+        click.echo("")
+        click.echo("Set one or more of these env vars to enable a provider:")
+        for v in load_known_vendors():
+            envs = " + ".join(v.get("env_vars") or [])
+            click.echo(f"  {v.get('vendor', '?'):20s}  {envs}")
+        return
+
+    click.echo(f"Detected providers ({len(detected)}):")
+    click.echo("=" * 70)
+    for v in detected:
+        check = "✓"
+        if v.live_verified is False:
+            check = "⚠"
+        click.echo(f"  {check} {v.vendor:20s} via {' + '.join(v.env_vars)}")
+        if v.base_url:
+            click.echo(f"      endpoint: {v.base_url}")
+        if v.live_verified is False:
+            click.echo(f"      live check FAILED: {v.live_error}")
+        elif v.live_models_count:
+            click.echo(f"      live check OK: {v.live_models_count} models reachable")
+        click.echo(f"      models: {', '.join(m['model'] for m in v.models[:5])}"
+                   + ("..." if len(v.models) > 5 else ""))
+        if v.notes:
+            click.echo(f"      note: {v.notes}")
+        click.echo("")
+
+    # Merge detected into tier registry + show resolver coverage
+    tiers_doc = load_tiers(domain_root=domain_path)
+    merged = merge_detected_into_tiers(tiers_doc, detected)
+    rep = coverage_report(tiers_doc=merged)
+    click.echo("Tier coverage (after merging detected vendors):")
+    click.echo("-" * 70)
+    for tier_name, info in rep["tiers"].items():
+        marker = "✓" if info["covered_by"] else "✗"
+        covered = info["covered_by"] or "(no creds)"
+        click.echo(f"  {marker} {tier_name:24s} → {covered}")
+
+
 @providers.command("resolve")
 @click.argument("agent_id_or_category")
 @click.option("--domain", "domain_path", default=None)
