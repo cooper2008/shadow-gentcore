@@ -37,3 +37,18 @@ Thumbs.db
 .env
 .env.*
 *.key
+
+# Runtime state — memory store (Tier 4), OMC sessions, claude tooling
+/.gentcore/
+/.omc/
+/.claude/
+/.coverage
+
+# Repo-root accidental writes from workflow runs that pointed
+# workspace_root at the framework dir. Real tests live in harness/tests/,
+# not /tests/ — leading slash anchors to root only.
+/src/
+/context/
+/migrations/
+/tests/
+/shadow-gentcore.code-workspace

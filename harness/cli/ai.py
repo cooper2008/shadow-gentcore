@@ -1261,7 +1261,11 @@ def genesis() -> None:
 @click.option("--domain", "domain_path", default=None, help="Path to domain repo containing domain.yaml (standalone mode)")
 @click.option("--discover", "-d", "discover_path", default=None, help="Directory to auto-discover sources")
 @click.option("--yes", "-y", "auto_confirm", is_flag=True, help="Skip the interactive Proceed? prompt (also: GENTCORE_AUTO_CONFIRM=1)")
-def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, dry_run: bool, team: str | None, domain_path: str | None, discover_path: str | None, auto_confirm: bool) -> None:
+@click.option("--genesis-provider", "genesis_provider_path", default=None,
+              help="Override provider config used by GENESIS agents (separate from domain runtime provider). "
+                   "Pass `auto` to use the codegen-strong tier from auto-discovery. "
+                   "Recommended when domain default is a tier-2 model that struggles with Builder's heavy schemas.")
+def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, dry_run: bool, team: str | None, domain_path: str | None, discover_path: str | None, auto_confirm: bool, genesis_provider_path: str | None) -> None:
     """Run the full genesis pipeline to build a domain.
 
     Standalone mode (domain repo, no workspace.yaml needed):
@@ -1543,7 +1547,61 @@ def genesis_build(sources: tuple[str, ...], industry: str | None, output: str, d
         click.echo(f"Error: Genesis workflow not found at {genesis_workflow}", err=True)
         raise SystemExit(1)
 
-    provider = _make_provider(dry_run, provider_config_path=provider_config_path)
+    # Genesis-provider override: when domain default is a tier-2 model
+    # (Gemini Flash, MiniMax) the heavy genesis steps (Builder/Architect)
+    # truncate or fail. The user can pass `--genesis-provider auto` to
+    # auto-resolve a codegen-strong model from detected creds, or point
+    # at a separate provider.yaml. Domain agents still inherit the
+    # domain-wide provider for runtime use; this flag only affects the
+    # genesis pipeline itself.
+    effective_provider_path = provider_config_path
+    if genesis_provider_path:
+        if genesis_provider_path == "auto":
+            from harness.core.provider_resolver import (
+                load_tiers, resolve_provider_for_agent,
+            )
+            tiers_doc = load_tiers(domain_root=domain_path)
+            spec = resolve_provider_for_agent(
+                category="codegen", tiers_doc=tiers_doc,
+            )
+            if spec is None:
+                click.echo(
+                    "  WARNING: --genesis-provider auto requested but no "
+                    "codegen-strong model has credentials. Falling back to "
+                    "domain default.", err=True,
+                )
+            else:
+                # Materialize the resolved spec into a temporary provider.yaml
+                # under the domain's .gentcore/ scratch dir.
+                import tempfile
+                tmp_path = Path(tempfile.gettempdir()) / f"gentcore-genesis-provider-{os.getpid()}.yaml"
+                tmp_payload = {
+                    "provider": spec["provider"],
+                    "model": spec["model"],
+                    "max_tokens": spec.get("max_tokens", 8192),
+                    "api_key_env": spec["api_key_env"],
+                }
+                if spec.get("base_url"):
+                    tmp_payload["base_url"] = spec["base_url"]
+                tmp_path.write_text(_yaml.safe_dump(tmp_payload))
+                effective_provider_path = str(tmp_path)
+                click.echo(
+                    f"  genesis-provider auto-resolved: {spec['model']} "
+                    f"(tier={spec['_resolved_tier']})"
+                )
+        else:
+            # Explicit path
+            override_path = Path(genesis_provider_path).resolve()
+            if not override_path.exists():
+                click.echo(
+                    f"Error: --genesis-provider path does not exist: {override_path}",
+                    err=True,
+                )
+                raise SystemExit(1)
+            effective_provider_path = str(override_path)
+            click.echo(f"  genesis-provider override: {override_path}")
+
+    provider = _make_provider(dry_run, provider_config_path=effective_provider_path)
 
     # Warn before real genesis runs (multi-agent, significant token usage)
     if not dry_run:
