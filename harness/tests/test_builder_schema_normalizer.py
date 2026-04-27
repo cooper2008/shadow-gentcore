@@ -227,6 +227,123 @@ output_schema:
         assert parsed["output_schema"]["required"] == ["result"]
 
 
+class TestSystemPromptRefAndCodegenSchema:
+    """Drift 0a + Drift 0b code-aware — additional tier-2-model gaps."""
+
+    def test_missing_system_prompt_ref_defaults_to_filename(self) -> None:
+        """MiniMax M2.7 commonly omits system_prompt_ref, breaking manifest load."""
+        manifest_yaml = """
+id: test/Foo/v1
+domain: test
+category: reasoning
+"""
+        out = HOOKS._normalize_agent_manifest_schema(
+            "agents/Foo/v1/agent_manifest.yaml", manifest_yaml
+        )
+        parsed = yaml.safe_load(out)
+        assert parsed["system_prompt_ref"] == "system_prompt.md"
+
+    def test_codegen_category_gets_files_array_schema(self) -> None:
+        """Code-writing categories get an output_schema declaring `files: [...]`
+        so AgentRunner._persist_output_files picks them up. Pre-fix the empty
+        {} default left CodeWriter unable to emit files."""
+        manifest_yaml = """
+id: test/CodeWriter/v1
+domain: test
+category: codegen
+system_prompt_ref: system_prompt.md
+"""
+        out = HOOKS._normalize_agent_manifest_schema(
+            "agents/CodeWriter/v1/agent_manifest.yaml", manifest_yaml
+        )
+        parsed = yaml.safe_load(out)
+        assert "files" in parsed["output_schema"]["required"]
+        assert parsed["output_schema"]["properties"]["files"]["type"] == "array"
+        item = parsed["output_schema"]["properties"]["files"]["items"]
+        assert {"path", "content"} == set(item["required"])
+
+    def test_review_category_keeps_generic_schema(self) -> None:
+        """Non-code-writing categories get the simple {} default — no files array."""
+        manifest_yaml = """
+id: test/Reviewer/v1
+domain: test
+category: reasoning
+system_prompt_ref: system_prompt.md
+"""
+        out = HOOKS._normalize_agent_manifest_schema(
+            "agents/Reviewer/v1/agent_manifest.yaml", manifest_yaml
+        )
+        parsed = yaml.safe_load(out)
+        assert "required" not in parsed["output_schema"] or \
+               parsed["output_schema"].get("required") == []
+        assert "files" not in (parsed["output_schema"].get("properties") or {})
+
+    def test_constraints_default_when_missing(self) -> None:
+        """Drift 1b — missing `constraints` field gets explicit empty {}."""
+        manifest_yaml = """
+id: test/Foo/v1
+domain: test
+category: reasoning
+system_prompt_ref: system_prompt.md
+"""
+        out = HOOKS._normalize_agent_manifest_schema(
+            "agents/Foo/v1/agent_manifest.yaml", manifest_yaml
+        )
+        parsed = yaml.safe_load(out)
+        assert parsed["constraints"] == {}
+
+
+class TestWorkflowGateNormalization:
+    """Drift — workflow steps missing `gate:` get a permissive default."""
+
+    def test_missing_step_gate_filled_in(self) -> None:
+        wf_yaml = """
+name: feature_delivery
+domain: test
+steps:
+  - name: analyze
+    agent: test/Foo/v1
+  - name: implement
+    agent: test/Bar/v1
+    depends_on: [analyze]
+"""
+        out = HOOKS._normalize_workflow_schema(
+            "workflows/feature_delivery.yaml", wf_yaml
+        )
+        parsed = yaml.safe_load(out)
+        assert parsed["steps"][0]["gate"]["name"] == "analyze_gate"
+        assert parsed["steps"][0]["gate"]["condition"] == "status == success"
+        assert parsed["steps"][0]["gate"]["on_fail"] == "retry"
+        assert parsed["steps"][1]["gate"]["name"] == "implement_gate"
+
+    def test_existing_gate_left_alone(self) -> None:
+        wf_yaml = """
+name: feature_delivery
+domain: test
+steps:
+  - name: analyze
+    agent: test/Foo/v1
+    gate:
+      name: my_custom_gate
+      condition: "output.score >= 0.8"
+      on_fail: abort
+      max_retries: 0
+"""
+        out = HOOKS._normalize_workflow_schema(
+            "workflows/feature_delivery.yaml", wf_yaml
+        )
+        parsed = yaml.safe_load(out)
+        assert parsed["steps"][0]["gate"]["name"] == "my_custom_gate"
+        assert parsed["steps"][0]["gate"]["on_fail"] == "abort"
+
+    def test_non_workflow_path_untouched(self) -> None:
+        wf_yaml = "name: feature_delivery\nsteps:\n  - name: analyze\n"
+        out = HOOKS._normalize_workflow_schema(
+            "agents/Foo/v1/agent_manifest.yaml", wf_yaml
+        )
+        assert out == wf_yaml
+
+
 class TestPermissionsNormalization:
     def test_missing_permissions_added_for_code_agent(self) -> None:
         """Code-writing agents get file_edit:allow + shell_command:allow defaults."""

@@ -254,6 +254,15 @@ def _normalize_agent_manifest_schema(path: str, content: str) -> str:
             }
         changed = True
 
+    # --- Drift 0a: missing system_prompt_ref ---
+    # AgentManifest declares this as REQUIRED. MiniMax M2.7 commonly omits
+    # it in roster output; Pydantic then fails the manifest at load time.
+    # Builder always writes a system_prompt.md alongside the manifest, so
+    # default the ref to that filename — it's almost always correct.
+    if "system_prompt_ref" not in data:
+        data["system_prompt_ref"] = "system_prompt.md"
+        changed = True
+
     # --- Drift 0b: missing input_schema / output_schema ---
     # AgentManifest declares both as optional (default {}) so pydantic accepts
     # the manifest, but downstream the smoke runner + Builder gates treat the
@@ -269,12 +278,52 @@ def _normalize_agent_manifest_schema(path: str, content: str) -> str:
             "properties": {},
         }
         changed = True
-    if "output_schema" not in data:
-        data["output_schema"] = {
-            "type": "object",
-            "description": "Auto-defaulted by Builder normalizer (LLM omitted output_schema).",
-            "properties": {},
-        }
+    # Detect a previous run's auto-defaulted output_schema so this pass
+    # can upgrade it (e.g. from generic empty {} → code-aware files array).
+    _prev_default_marker = "Auto-defaulted by Builder normalizer"
+    _existing_os = data.get("output_schema")
+    _is_old_auto_default = (
+        isinstance(_existing_os, dict)
+        and _prev_default_marker in str(_existing_os.get("description") or "")
+        and not _existing_os.get("required")
+    )
+    if "output_schema" not in data or _is_old_auto_default:
+        # Category-aware default: code-writing categories must declare a
+        # `files: [{path, content}]` array so AgentRunner._persist_output_files
+        # picks them up. Pre-fix the empty {} default left CodeWriter unable
+        # to emit files — workflow ran but produced nothing on disk. This is
+        # the bridge between "manifest is schema-valid" and "agent actually
+        # writes files when run".
+        category = str(data.get("category") or "").lower()
+        if any(t in category for t in ("codegen", "code", "fast", "direct", "writer", "migration")):
+            data["output_schema"] = {
+                "type": "object",
+                "description": (
+                    "Auto-defaulted by Builder normalizer. Code-writing agents "
+                    "MUST emit a `files` array; the framework persists each entry "
+                    "under task.workspace_root."
+                ),
+                "required": ["files"],
+                "properties": {
+                    "files": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["path", "content"],
+                            "properties": {
+                                "path": {"type": "string"},
+                                "content": {"type": "string"},
+                            },
+                        },
+                    },
+                },
+            }
+        else:
+            data["output_schema"] = {
+                "type": "object",
+                "description": "Auto-defaulted by Builder normalizer (LLM omitted output_schema).",
+                "properties": {},
+            }
         changed = True
 
     # --- Drift 1: constraints as list ---
@@ -286,6 +335,13 @@ def _normalize_agent_manifest_schema(path: str, content: str) -> str:
             meta = {}
         meta.setdefault("constraint_notes", []).extend(notes)
         data["metadata"] = meta
+        data["constraints"] = {}
+        changed = True
+    elif "constraints" not in data:
+        # --- Drift 1b: missing constraints field altogether ---
+        # Smoke runner flags this as incomplete. AgentManifest accepts the
+        # absence (default {}) but we make it explicit for the runner +
+        # human reviewers. Empty dict = "no agent-specific constraints".
         data["constraints"] = {}
         changed = True
 
@@ -304,6 +360,63 @@ def _normalize_agent_manifest_schema(path: str, content: str) -> str:
                 meta.setdefault("dropped_preload_sources", []).extend(dropped)
                 data["metadata"] = meta
                 changed = True
+
+    if not changed:
+        return content
+    try:
+        return _yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
+    except Exception:
+        return content
+
+
+def _normalize_workflow_schema(path: str, content: str) -> str:
+    """Fill missing ``gate:`` blocks on workflow steps.
+
+    Drift — Gemini-Flash and other tier-2 models often emit workflow YAML
+    where some steps have ``gate:`` and others don't. Smoke runner flags
+    each gateless step as a structural failure. Add a permissive default
+    so at minimum the workflow is structurally valid; humans can tighten.
+
+    Default gate: ``{name: <step>_gate, condition: status == success,
+    on_fail: retry, max_retries: 1}``. Mirrors the most common pattern
+    Builder template emits already.
+
+    Applies ONLY to ``workflows/*.yaml``. Round-trips through PyYAML — on
+    parse failure or non-workflow shape, original content passes through.
+    """
+    if not content or not isinstance(content, str):
+        return content
+    p_lower = path.lower()
+    is_workflow = (
+        (p_lower.startswith("workflows/") or "/workflows/" in p_lower)
+        and p_lower.endswith((".yaml", ".yml"))
+    )
+    if not is_workflow:
+        return content
+    try:
+        import yaml as _yaml
+        data = _yaml.safe_load(content)
+    except Exception:
+        return content
+    if not isinstance(data, dict):
+        return content
+    steps = data.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return content
+
+    changed = False
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        if "gate" not in step or step.get("gate") is None:
+            step_name = str(step.get("name") or step.get("agent") or "step").rsplit("/", 1)[-1]
+            step["gate"] = {
+                "name": f"{step_name}_gate",
+                "condition": "status == success",
+                "on_fail": "retry",
+                "max_retries": 1,
+            }
+            changed = True
 
     if not changed:
         return content
@@ -448,6 +561,7 @@ def post_execute(manifest: Any, task: Any, result: Any) -> Any:
             content = _normalize_enums(raw_path, content)
             content = _normalize_agent_manifest_schema(raw_path, content)
             content = _normalize_domain_manifest_schema(raw_path, content)
+            content = _normalize_workflow_schema(raw_path, content)
             rel = str(p.relative_to(out_root)) if str(p).startswith(str(out_root)) else str(p)
 
             # Regen-safety check: if file already exists AND its current
