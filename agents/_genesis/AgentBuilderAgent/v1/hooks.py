@@ -254,6 +254,29 @@ def _normalize_agent_manifest_schema(path: str, content: str) -> str:
             }
         changed = True
 
+    # --- Drift 0b: missing input_schema / output_schema ---
+    # AgentManifest declares both as optional (default {}) so pydantic accepts
+    # the manifest, but downstream the smoke runner + Builder gates treat the
+    # absence as incomplete (Gemini-Flash truncation often drops them when its
+    # max_tokens hits mid-roster). Drop in a minimal pass-through so the agent
+    # is still wireable; humans can tighten later. Schema-strict callers can
+    # always set GENTCORE_STRICT_MANIFESTS=1 — these defaults are still
+    # schema-valid.
+    if "input_schema" not in data:
+        data["input_schema"] = {
+            "type": "object",
+            "description": "Auto-defaulted by Builder normalizer (LLM omitted input_schema).",
+            "properties": {},
+        }
+        changed = True
+    if "output_schema" not in data:
+        data["output_schema"] = {
+            "type": "object",
+            "description": "Auto-defaulted by Builder normalizer (LLM omitted output_schema).",
+            "properties": {},
+        }
+        changed = True
+
     # --- Drift 1: constraints as list ---
     constraints = data.get("constraints")
     if isinstance(constraints, list):

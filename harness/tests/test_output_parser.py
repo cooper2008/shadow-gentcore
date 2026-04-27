@@ -109,3 +109,132 @@ class TestCoerceTypes:
         assert result is not None
         assert result["score"] == 7
         assert result["passed"] is True
+
+
+# ── Vendor-quirk: stringified arrays/objects (Gemini Flash) ─────────────────
+
+
+class TestStringifiedNestedDecode:
+    """Regression: Gemini Flash sometimes emits nested arrays/objects as
+    JSON-encoded STRINGS inside the parent object instead of real arrays.
+    The schema's `type: array` means the gate's `agent_count` length-check
+    silently fails. Auto-decode when shape matches the schema.
+    """
+
+    @pytest.fixture
+    def architect_schema(self) -> dict:
+        return {
+            "type": "object",
+            "required": ["agent_roster", "design_quality"],
+            "properties": {
+                "agent_roster": {"type": "array"},
+                "design_quality": {"type": "object"},
+            },
+        }
+
+    def test_stringified_array_unescapes_to_real_list(
+        self, parser: OutputParser, architect_schema: dict
+    ) -> None:
+        # Real Gemini-Flash failure mode: agent_roster is a JSON-string
+        text = (
+            '{"agent_roster": "[{\\"name\\": \\"x\\"}, {\\"name\\": \\"y\\"}]", '
+            '"design_quality": {"agent_count": 2, "dag_valid": true}}'
+        )
+        result = parser.parse(text, architect_schema)
+        assert result is not None
+        assert isinstance(result["agent_roster"], list)
+        assert len(result["agent_roster"]) == 2
+        assert result["agent_roster"][0] == {"name": "x"}
+
+    def test_stringified_object_unescapes_to_real_dict(
+        self, parser: OutputParser, architect_schema: dict
+    ) -> None:
+        text = (
+            '{"agent_roster": [], '
+            '"design_quality": "{\\"agent_count\\": 5, \\"dag_valid\\": false}"}'
+        )
+        result = parser.parse(text, architect_schema)
+        assert result is not None
+        assert isinstance(result["design_quality"], dict)
+        assert result["design_quality"]["agent_count"] == 5
+        assert result["design_quality"]["dag_valid"] is False
+
+    def test_real_array_left_alone(
+        self, parser: OutputParser, architect_schema: dict
+    ) -> None:
+        """Strong models that already emit real arrays must not be touched."""
+        text = (
+            '{"agent_roster": [{"name": "a"}], '
+            '"design_quality": {"agent_count": 1, "dag_valid": true}}'
+        )
+        result = parser.parse(text, architect_schema)
+        assert result is not None
+        assert result["agent_roster"] == [{"name": "a"}]
+        assert result["design_quality"]["agent_count"] == 1
+
+    def test_malformed_stringified_array_left_as_string(
+        self, parser: OutputParser, architect_schema: dict
+    ) -> None:
+        """If the inner JSON is broken, leave the value as string and let
+        the gate fail loudly — don't silently produce something the schema
+        didn't authorise."""
+        text = (
+            '{"agent_roster": "[{not-real-json}]", '
+            '"design_quality": {"agent_count": 0, "dag_valid": false}}'
+        )
+        result = parser.parse(text, architect_schema)
+        assert result is not None
+        assert isinstance(result["agent_roster"], str)
+
+    def test_string_for_string_field_left_alone(
+        self, parser: OutputParser
+    ) -> None:
+        """type: string fields must not be array-decoded even when their
+        value happens to start with `[`."""
+        schema = {"type": "object", "properties": {"label": {"type": "string"}}}
+        text = '{"label": "[experimental]"}'
+        result = parser.parse(text, schema)
+        assert result is not None
+        assert result["label"] == "[experimental]"
+
+
+class TestTruncationRepair:
+    """Vendor max-tokens truncation produces stringified arrays cut mid-item.
+    Recover the well-formed prefix instead of dropping the whole field.
+    """
+
+    @pytest.fixture
+    def architect_schema(self) -> dict:
+        return {
+            "type": "object",
+            "required": ["agent_roster"],
+            "properties": {"agent_roster": {"type": "array"}},
+        }
+
+    def test_truncated_stringified_array_recovers_complete_items(
+        self, parser: OutputParser, architect_schema: dict
+    ) -> None:
+        """Real Gemini-Flash failure: stringified array cut mid-second-item.
+        Outer JSON closes correctly (model emits its closing `}`) but the
+        stringified inner array is missing its `]`.
+        """
+        text = (
+            '{"agent_roster": "[{\\"name\\": \\"a\\"}, {\\"name\\": \\"b\\", \\"trun"}'
+        )
+        result = parser.parse(text, architect_schema)
+        assert result is not None
+        # First object recovered; second was truncated and dropped.
+        assert isinstance(result["agent_roster"], list)
+        assert len(result["agent_roster"]) >= 1
+        assert result["agent_roster"][0] == {"name": "a"}
+
+    def test_truncation_recovery_drops_field_when_no_prefix_parses(
+        self, parser: OutputParser, architect_schema: dict
+    ) -> None:
+        """If we can't recover a single complete element, leave the field
+        as the original string — the gate will surface the failure loudly."""
+        text = '{"agent_roster": "[{not even close to valid"}'
+        result = parser.parse(text, architect_schema)
+        assert result is not None
+        # Recovery returned None → original string preserved
+        assert isinstance(result["agent_roster"], str)

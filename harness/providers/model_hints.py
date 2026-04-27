@@ -41,7 +41,14 @@ GEMINI_FLASH_HINT = (
     "When the task involves tool calls, after all tools are invoked, your "
     "FINAL reply must be ONLY the JSON object that matches the declared "
     "output_schema. Do not restate what you did, do not wrap in markdown, "
-    "do not apologise — emit the raw JSON object and nothing else."
+    "do not apologise — emit the raw JSON object and nothing else.\n"
+    "Nested arrays and objects MUST be emitted as actual JSON arrays/objects, "
+    "NOT as JSON-encoded strings. Wrong: `{\"agent_roster\": \"[{...}]\"}`. "
+    "Right: `{\"agent_roster\": [{...}]}`. The schema's `type: array` means "
+    "produce an actual array — not a string that happens to contain JSON.\n"
+    "If your output may be long, prioritise emitting EVERY required field "
+    "with at least minimal valid values over fully populating optional fields. "
+    "A complete schema-valid object beats a truncated half-rich one."
 )
 
 

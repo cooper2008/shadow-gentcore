@@ -7,6 +7,58 @@ import re
 from typing import Any
 
 
+def _repair_truncated_json(text: str, expected_type: str) -> Any | None:
+    """Recover a usable prefix from a truncated stringified JSON value.
+
+    Vendor failure mode (Gemini-Flash, sometimes others): the model emits a
+    stringified array/object inside the parent payload but max_tokens cuts
+    it mid-element, leaving trailing fragments like `, {"name": "x", "p` that
+    break ``json.loads``. Drop trailing characters until ``json.loads`` of
+    the prefix + ``]`` (array) or ``}`` (object) succeeds.
+
+    Returns the recovered list/dict on success, or ``None`` if no prefix
+    parses cleanly. Bounded to keep the worst case O(n) — walks backward
+    from the end looking for matching close-tokens, only re-parsing at
+    plausible boundaries.
+    """
+    if not text:
+        return None
+    if expected_type == "array" and not text.startswith("["):
+        return None
+    if expected_type == "object" and not text.startswith("{"):
+        return None
+    closer = "]" if expected_type == "array" else "}"
+    candidate_close = "}" if expected_type == "array" else None  # array of objects → close last good item
+
+    # Walk backward looking for either:
+    #  - a real close token (closer)
+    #  - or, for arrays, the last `}` (end of an item) — append `]` to close.
+    last_good: Any = None
+    for i in range(len(text) - 1, 0, -1):
+        ch = text[i]
+        if ch != closer and (candidate_close is None or ch != candidate_close):
+            continue
+        # Try parsing prefix-up-to-i (+ closer if needed)
+        prefix = text[: i + 1]
+        attempts = [prefix]
+        if expected_type == "array" and ch != closer:
+            attempts.append(prefix + closer)
+        for attempt in attempts:
+            try:
+                parsed = json.loads(attempt)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if expected_type == "array" and isinstance(parsed, list) and parsed:
+                last_good = parsed
+                break
+            if expected_type == "object" and isinstance(parsed, dict) and parsed:
+                last_good = parsed
+                break
+        if last_good is not None:
+            return last_good
+    return None
+
+
 class OutputParser:
     """Extract structured JSON from LLM output using multiple fallback strategies.
 
@@ -96,6 +148,37 @@ class OutputParser:
                     result[key] = True
                 elif val.lower() in ("false", "0", "no"):
                     result[key] = False
+            elif expected_type in ("array", "object"):
+                # Vendor quirk (notably Gemini): nested arrays/objects
+                # sometimes come back as JSON-encoded STRINGS inside the
+                # parent object — e.g. `{"agent_roster": "[{...}, ...]"}`
+                # instead of `{"agent_roster": [{...}, ...]}`. The schema
+                # says it's an array, the gate evaluates `agent_count`
+                # by length-counting the array, but the string form silently
+                # fails the gate. Auto-decode when shape matches.
+                stripped = val.strip()
+                shape_ok = (
+                    expected_type == "array" and stripped.startswith("[")
+                ) or (
+                    expected_type == "object" and stripped.startswith("{")
+                )
+                if shape_ok:
+                    try:
+                        decoded = json.loads(stripped)
+                        if (expected_type == "array" and isinstance(decoded, list)) or \
+                           (expected_type == "object" and isinstance(decoded, dict)):
+                            result[key] = decoded
+                    except (json.JSONDecodeError, ValueError):
+                        # Vendor-truncation recovery: Gemini-Flash often hits
+                        # max_tokens mid-stringified-array, leaving trailing
+                        # `,\n {`-fragments that break json.loads. Walk
+                        # backward from the last well-formed `}` (object) or
+                        # `]` (top-level closer) and try shorter prefixes.
+                        # If we recover at least one well-formed element, use
+                        # it — beats silently dropping the whole field.
+                        repaired = _repair_truncated_json(stripped, expected_type)
+                        if repaired is not None:
+                            result[key] = repaired
         return result
 
     # ------------------------------------------------------------------

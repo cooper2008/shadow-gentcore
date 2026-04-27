@@ -23,17 +23,32 @@ from harness.providers.anthropic_provider import AnthropicProvider
 
 
 async def main() -> None:
-    api_key = os.environ.get("ZHIPU_API_KEY")
-    if not api_key:
-        print("ZHIPU_API_KEY not set; aborting probe.")
-        sys.exit(2)
-
-    prov = AnthropicProvider(
-        api_key=api_key,
-        model="glm-5.1",
-        base_url="https://open.bigmodel.cn/api/anthropic",
-        max_tokens=1024,
-    )
+    # Default vendor = GLM-5.1; override with VENDOR=gemini for Gemini probe.
+    vendor = os.environ.get("VENDOR", "glm")
+    if vendor == "gemini":
+        from harness.providers.openai_provider import OpenAIProvider
+        google_key = os.environ.get("GOOGLE_API_KEY")
+        if not google_key:
+            print("GOOGLE_API_KEY not set; aborting Gemini probe.")
+            sys.exit(2)
+        prov = OpenAIProvider(
+            api_key=google_key,
+            model=os.environ.get("VENDOR_MODEL", "gemini-2.5-flash"),
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+            max_tokens=1024,
+        )
+        print(f"[Gemini probe] model={prov._model}")
+    else:
+        api_key = os.environ.get("ZHIPU_API_KEY")
+        if not api_key:
+            print("ZHIPU_API_KEY not set; aborting probe.")
+            sys.exit(2)
+        prov = AnthropicProvider(
+            api_key=api_key,
+            model="glm-5.1",
+            base_url="https://open.bigmodel.cn/api/anthropic",
+            max_tokens=1024,
+        )
 
     schema = {
         "type": "object",

@@ -165,6 +165,68 @@ context:
         assert parsed["metadata"]["dropped_preload_sources"] == ["standards"]
 
 
+class TestSchemaDefaultsNormalization:
+    """Drift 0b — missing input_schema / output_schema get minimal defaults.
+
+    Gemini-Flash truncation often drops these fields when max_tokens hits
+    mid-roster. Pre-fix the agent loaded but had unusable schemas; the smoke
+    runner flagged them as incomplete. Now the normalizer fills minimal
+    pass-through defaults so the agent is wireable.
+    """
+
+    def test_missing_input_schema_gets_default(self) -> None:
+        manifest_yaml = """
+id: test/Foo/v1
+domain: test
+category: reasoning
+system_prompt_ref: system_prompt.md
+"""
+        out = HOOKS._normalize_agent_manifest_schema(
+            "agents/Foo/v1/agent_manifest.yaml", manifest_yaml
+        )
+        parsed = yaml.safe_load(out)
+        assert parsed["input_schema"]["type"] == "object"
+        assert "Auto-defaulted" in parsed["input_schema"]["description"]
+
+    def test_missing_output_schema_gets_default(self) -> None:
+        manifest_yaml = """
+id: test/Foo/v1
+domain: test
+category: reasoning
+system_prompt_ref: system_prompt.md
+"""
+        out = HOOKS._normalize_agent_manifest_schema(
+            "agents/Foo/v1/agent_manifest.yaml", manifest_yaml
+        )
+        parsed = yaml.safe_load(out)
+        assert parsed["output_schema"]["type"] == "object"
+        assert "Auto-defaulted" in parsed["output_schema"]["description"]
+
+    def test_existing_schemas_left_alone(self) -> None:
+        manifest_yaml = """
+id: test/Foo/v1
+domain: test
+category: reasoning
+system_prompt_ref: system_prompt.md
+input_schema:
+  type: object
+  required: [task]
+  properties:
+    task: {type: string}
+output_schema:
+  type: object
+  required: [result]
+  properties:
+    result: {type: string}
+"""
+        out = HOOKS._normalize_agent_manifest_schema(
+            "agents/Foo/v1/agent_manifest.yaml", manifest_yaml
+        )
+        parsed = yaml.safe_load(out)
+        assert parsed["input_schema"]["required"] == ["task"]
+        assert parsed["output_schema"]["required"] == ["result"]
+
+
 class TestPermissionsNormalization:
     def test_missing_permissions_added_for_code_agent(self) -> None:
         """Code-writing agents get file_edit:allow + shell_command:allow defaults."""
