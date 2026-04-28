@@ -150,7 +150,7 @@ class TestRouterFirstMatchWins:
 class TestRouterConfidenceCondition:
     @pytest.mark.asyncio
     async def test_confidence_route_passes_when_threshold_met(self) -> None:
-        steps = [{"name": "classify", "agent": "Classifier"}]
+        _steps = [{"name": "classify", "agent": "Classifier"}]
         # Inject confidence directly into the stub result via mock; we override
         # step results manually after execution by checking _evaluate_route_condition.
         # For a cleaner test, set confidence in the result by using a mock engine.

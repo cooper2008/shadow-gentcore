@@ -98,7 +98,7 @@ class TestGenesisPromptWorkflow:
     def test_feedback_loops_present(self) -> None:
         """validate → build loop is the minimum floor the CLI expects."""
         wf = _load(GENESIS_PROMPT)
-        loops = {l["name"] for l in wf.get("feedback_loops", [])}
+        loops = {lp["name"] for lp in wf.get("feedback_loops", [])}
         assert "validate_to_build" in loops
 
     def test_budget_declared(self) -> None:

@@ -259,7 +259,7 @@ class TestPublisher:
         domain_path = tmp_path / "my_domain"
         domain_path.mkdir()
 
-        result = pub.publish(domain_path, version="1.0.0", owner="eng", certification_summary="PASS")
+        pub.publish(domain_path, version="1.0.0", owner="eng", certification_summary="PASS")
         assert (catalog_dir / "my_domain@1.0.0.json").exists()
 
         entries = pub.discover("my_domain")

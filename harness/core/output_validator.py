@@ -161,8 +161,6 @@ class OutputValidator:
         name = criterion.get("name", "unnamed")
         ctype = criterion.get("type", "automated")
         weight = criterion.get("weight", 1.0)
-        description = criterion.get("description", "")
-
         if ctype == "automated":
             return self._run_automated(criterion, output, name, weight)
         elif ctype == "llm_judge" and provider is not None:

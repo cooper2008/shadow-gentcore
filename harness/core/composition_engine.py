@@ -781,7 +781,6 @@ class CompositionEngine:
             deps = set(step.get("depends_on", []))
             name_to_deps[name] = deps
 
-        all_names = set(name_to_deps.keys())
         layers: list[list[str]] = []
         resolved: set[str] = set()
 

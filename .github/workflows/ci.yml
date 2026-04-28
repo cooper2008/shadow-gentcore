@@ -7,9 +7,7 @@
 # Three jobs:
 #   • test     — full pytest run, excluding the known-flaky concurrency tests
 #                that fail in batch but pass in isolation. ~40s.
-#   • lint     — ruff check, currently allow-failure while we burn down the
-#                133 issues from the workspace audit. Promote to required
-#                gate when count hits zero.
+#   • lint     — ruff check, required gate (0 issues as of audit cleanup).
 #   • smoke    — `./ai test smoke` (zero-cost, no API key) to prove the
 #                full simulated genesis pipeline still wires together.
 #
@@ -93,9 +91,6 @@ jobs:
     name: ruff check
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # Allow-failure until the audit-flagged 133 issues are burned down.
-    # Promote to required gate when the count is zero.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

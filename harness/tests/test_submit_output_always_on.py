@@ -172,7 +172,7 @@ async def test_provider_retries_on_transient_then_succeeds() -> None:
 
     # Patch sleep so the test doesn't actually wait 3 seconds.
     import harness.providers.anthropic_provider as _mod
-    orig_sleep = _mod.__dict__.get("asyncio")
+    _orig_sleep = _mod.__dict__.get("asyncio")
     # Easier: monkeypatch asyncio.sleep at module scope before await
     import asyncio as _asyncio
     _orig = _asyncio.sleep

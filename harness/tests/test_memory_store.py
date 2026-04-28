@@ -225,7 +225,7 @@ class TestFileMemoryStoreMaxEntries:
         for i in range(7):
             store.store("agent-a", "key", f"value-{i}")
         memories_file = tmp_path / "agent-a" / "memories.jsonl"
-        lines = [l for l in memories_file.read_text().splitlines() if l.strip()]
+        lines = [ln for ln in memories_file.read_text().splitlines() if ln.strip()]
         assert len(lines) == 3
 
 

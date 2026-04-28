@@ -118,8 +118,6 @@ class TestFactoryStubExecution:
                 return {"status": "completed", "output": f"[STUB] {agent_id} done"}
 
         wf = _load_yaml(FACTORY_WORKFLOW)
-        loader = ManifestLoader()
-
         engine = CompositionEngine(agent_runner=StubRunner())
 
         # Build minimal step_configs

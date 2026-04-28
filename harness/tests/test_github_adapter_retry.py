@@ -47,7 +47,7 @@ class TestBackoffRetry:
         ]
         client.get = AsyncMock(side_effect=responses)
         # Stub asyncio.sleep to avoid actual waiting
-        real_sleep = asyncio.sleep
+        _real_sleep = asyncio.sleep
         slept_for: list[float] = []
 
         async def fake_sleep(seconds):

@@ -12,6 +12,8 @@ Covers:
 
 from __future__ import annotations
 
+import contextlib
+import importlib
 import os
 import time
 from pathlib import Path
@@ -237,9 +239,6 @@ class TestHumanApprovalRequiredException:
 # ---------------------------------------------------------------------------
 # 5. Server endpoints — list approvals / approve / error cases
 # ---------------------------------------------------------------------------
-
-import contextlib
-import importlib
 
 
 @contextlib.contextmanager

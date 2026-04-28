@@ -108,7 +108,7 @@ class TestParseRunbook:
 
 
 class TestRunbookLibrary:
-    def _make_library(self, tmp_path: Path) -> "RunbookLibrary":
+    def _make_library(self, tmp_path: Path):
         from harness.core.runbook_loader import RunbookLibrary
 
         _write_runbook(

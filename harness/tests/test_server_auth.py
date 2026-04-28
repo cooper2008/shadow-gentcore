@@ -154,7 +154,7 @@ def test_semaphore_exhausted_returns_429(monkeypatch):
     endpoint = route.endpoint  # the async def run_agent_endpoint
 
     # Extract _semaphore from the closure of create_app
-    frame_locals = {}
+    _frame_locals = {}
     # Walk the closures of the endpoint to find the semaphore
     semaphore = None
     for cell in (endpoint.__closure__ or []):
@@ -171,7 +171,7 @@ def test_semaphore_exhausted_returns_429(monkeypatch):
     async def _acquire_and_hold():
         await semaphore.acquire()  # occupy the single slot
 
-    asyncio.get_event_loop().run_until_complete(_acquire_and_hold())
+    asyncio.run(_acquire_and_hold())
     try:
         with patch("harness.server.runner.run_agent", return_value={"status": "ok"}):
             client = TestClient(app, raise_server_exceptions=False)

@@ -10,23 +10,32 @@ import time
 from enum import Enum
 from typing import Any
 
+from agent_contracts.manifests.agent_manifest import AgentManifest
+from agent_contracts.contracts.task_envelope import TaskEnvelope
+from agent_contracts.contracts.run_record import RunRecord, RunStatus
+
+from harness.core.prompt_assembler import PromptAssembler
+from harness.core.mode_dispatcher import ModeDispatcher
+from harness.core.tool_executor import ToolExecutor
+from harness.core.budget_tracker import BudgetTracker, BudgetExceededError
+from harness.core.output_parser import OutputParser
+
 _HOOK_TIMEOUT = 5  # seconds
 
 _hook_logger = logging.getLogger(__name__)
 
 
 # H3 — FRAMEWORK_AUDIT_2026Q2
-# When this env var is truthy (value in {"1", "true", "yes", "on"} — case-insensitive)
-# AgentRunner.run() populates ToolExecutor.set_rule_context() with a RuleContext
-# built from the agent manifest. This activates RuleEngine Layers 2–6 (category
-# overrides, domain policy, agent permissions, workflow/runtime overrides) which
-# were dead in production before H3.
-_ENFORCE_RULES_ENV = "GENTCORE_ENFORCE_RULES"
+# Rule enforcement is ON by default. Set GENTCORE_UNSAFE_DISABLE_RULES=1 (or true/yes/on)
+# to opt out — this populates ToolExecutor.set_rule_context() with a RuleContext from
+# the agent manifest, activating RuleEngine Layers 2–6 (category overrides, domain
+# policy, agent permissions, workflow/runtime overrides).
+_UNSAFE_DISABLE_RULES_ENV = "GENTCORE_UNSAFE_DISABLE_RULES"
 _TRUTHY = {"1", "true", "yes", "on"}
 
 
 def _enforce_rules_enabled() -> bool:
-    return os.environ.get(_ENFORCE_RULES_ENV, "").strip().lower() in _TRUTHY
+    return os.environ.get(_UNSAFE_DISABLE_RULES_ENV, "").strip().lower() not in _TRUTHY
 
 
 def build_rule_context_from_manifest(manifest: Any) -> "RuleContext":  # noqa: F821 (forward ref)
@@ -85,16 +94,6 @@ def _call_hook_safe(hook_fn: Any, *args: Any) -> Any:
             "Hook %s raised %s: %s", hook_fn.__name__, type(exc).__name__, exc,
         )
         return args[-1]  # Return unmodified input on error
-
-from agent_contracts.manifests.agent_manifest import AgentManifest
-from agent_contracts.contracts.task_envelope import TaskEnvelope
-from agent_contracts.contracts.run_record import RunRecord, RunStatus
-
-from harness.core.prompt_assembler import PromptAssembler
-from harness.core.mode_dispatcher import ModeDispatcher
-from harness.core.tool_executor import ToolExecutor
-from harness.core.budget_tracker import BudgetTracker, BudgetExceededError
-from harness.core.output_parser import OutputParser
 
 
 class AgentState(str, Enum):
@@ -274,10 +273,9 @@ class AgentRunner:
         _set_state(AgentState.READY, agent_id)
 
         # H3: wire rule context onto the tool executor so RuleEngine Layers 2-6
-        # enforce against this agent's declared category + permissions. Gated by
-        # GENTCORE_ENFORCE_RULES=1 so pre-H3 behaviour remains the default until
-        # domain owners migrate their manifests. Cleared in the `finally` below
-        # so one agent's context doesn't leak into another sharing the executor.
+        # enforce against this agent's declared category + permissions. Active by
+        # default; set GENTCORE_UNSAFE_DISABLE_RULES=1 to opt out. Cleared in the
+        # `finally` below so one agent's context doesn't leak into another.
         _rule_enforcement_active = (
             _enforce_rules_enabled()
             and self.tool_executor is not None

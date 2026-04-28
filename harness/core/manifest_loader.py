@@ -1020,7 +1020,8 @@ class ManifestLoader:
             max_iter = loop_def.get("max_iterations") or loop_def.get("max_rounds", 2)
             condition_expr = loop_def.get("condition")
             if condition_expr:
-                condition_fn = lambda result, _c=condition_expr: not engine._evaluate_condition(_c, result)
+                def condition_fn(result, _c=condition_expr):  # noqa: E306
+                    return not engine._evaluate_condition(_c, result)
             else:
                 condition_fn = None
             loop = FeedbackLoop(

@@ -1,15 +1,13 @@
-"""Tests for H3 — wire set_rule_context behind GENTCORE_ENFORCE_RULES=1.
+"""Tests for H3 — rule enforcement via set_rule_context (default ON).
 
 The P0 finding from FRAMEWORK_AUDIT_2026Q2: `ToolExecutor.set_rule_context`
 was defined but NEVER called in production. Layers 2–6 of RuleEngine (category
 overrides, domain policy, agent permissions, workflow/runtime overrides) were
-dead. After H3:
+dead. After H3 (enforcement now ON by default):
 
-  - When GENTCORE_ENFORCE_RULES=1 is set, AgentRunner.run() populates
-    ToolExecutor.set_rule_context(RuleContext(agent_category=...,
-    agent_permissions=...)) before the execution strategy runs tools.
-  - When the flag is unset (default), behaviour is unchanged from pre-H3
-    (rule_context stays None; only platform-floor + trusted-paths apply).
+  - AgentRunner.run() populates ToolExecutor.set_rule_context(RuleContext(...))
+    before the execution strategy runs tools unless GENTCORE_UNSAFE_DISABLE_RULES
+    is set to a truthy value (1/true/yes/on).
   - Rule context is CLEARED after each run so one agent's permissions
     don't leak into another sharing the same ToolExecutor instance.
 """
@@ -98,10 +96,11 @@ class TestBuildRuleContextFromManifest:
         assert ctx.agent_category == ""
 
 
-class TestFlagOffPreservesLegacyBehaviour:
+class TestSafeDefaultRuleEnforcement:
     @pytest.mark.asyncio
-    async def test_no_rule_context_set_when_flag_unset(self) -> None:
+    async def test_rule_context_set_when_flag_unset(self) -> None:
         os.environ.pop("GENTCORE_ENFORCE_RULES", None)
+        os.environ.pop("GENTCORE_UNSAFE_DISABLE_RULES", None)
         strategy = _StubStrategy()
         runner = AgentRunner(
             provider=_StubProvider(),
@@ -109,14 +108,24 @@ class TestFlagOffPreservesLegacyBehaviour:
             tool_executor=ToolExecutor(),
         )
         await runner.run(manifest=_manifest("ops"))
-        assert strategy.captured_context is None, (
-            "With GENTCORE_ENFORCE_RULES unset, rule_context must remain None "
-            "(pre-H3 behaviour preserved)"
-        )
+        assert strategy.captured_context is not None
+        assert strategy.captured_context.agent_category == "ops"
 
     @pytest.mark.asyncio
-    async def test_flag_off_zero_equivalent(self) -> None:
+    async def test_legacy_disable_flag_no_longer_disables_rules(self) -> None:
         with patch.dict(os.environ, {"GENTCORE_ENFORCE_RULES": "0"}, clear=False):
+            strategy = _StubStrategy()
+            runner = AgentRunner(
+                provider=_StubProvider(),
+                mode_dispatcher=_StubModeDispatcher(strategy),
+                tool_executor=ToolExecutor(),
+            )
+            await runner.run(manifest=_manifest("ops"))
+            assert strategy.captured_context is not None
+
+    @pytest.mark.asyncio
+    async def test_explicit_unsafe_disable_flag_bypasses_rule_context(self) -> None:
+        with patch.dict(os.environ, {"GENTCORE_UNSAFE_DISABLE_RULES": "1"}, clear=False):
             strategy = _StubStrategy()
             runner = AgentRunner(
                 provider=_StubProvider(),

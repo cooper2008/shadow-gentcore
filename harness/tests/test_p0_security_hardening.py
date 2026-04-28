@@ -44,7 +44,7 @@ class TestTarSymlinkRejection:
         buf.seek(0)
 
         # Simulate the adapter's extraction loop (no network).
-        adapter = GitHubAdapter()
+        _adapter = GitHubAdapter()
         dest = tmp_path / "dest"
         dest.mkdir()
         with pytest.raises(RuntimeError, match="symlink"):

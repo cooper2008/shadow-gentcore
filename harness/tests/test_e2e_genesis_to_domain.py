@@ -115,7 +115,7 @@ class TestPhase2GenesisOutputQuality:
         loops = design.get("feedback_loops", [])
         assert len(loops) >= 1
         # review → code feedback loop
-        assert any(l["from_step"] == "review" and l["to_step"] == "code" for l in loops)
+        assert any(lp["from_step"] == "review" and lp["to_step"] == "code" for lp in loops)
 
     def test_workflow_has_parallel_branches(self):
         design = GENESIS_OUTPUTS["AgentArchitectAgent"]["workflow_design"]
