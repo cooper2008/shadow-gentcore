@@ -123,7 +123,7 @@ class SmokeTestProvider(BaseProvider):
         self._genesis_provider = GenesisTestProvider()
         self.call_log: list[dict[str, Any]] = []
 
-    async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> dict[str, Any]:
+    async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> dict[str, Any]:  # type: ignore[override]
         """Return schema-correct output without any API calls."""
         # 1. Check if this is a genesis agent → delegate
         genesis_agent = _identify_genesis_agent(messages)

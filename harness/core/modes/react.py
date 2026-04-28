@@ -14,7 +14,7 @@ def _is_json_like(text: str) -> bool:
     return t.startswith("{") and t.endswith("}")
 
 
-def _satisfies_schema_shape(text: str, schema: dict | None) -> bool:
+def _satisfies_schema_shape(text: str, schema: dict[str, Any] | None) -> bool:
     """Return True if `text` parses to a dict that covers the schema's required fields.
 
     Empty `{}` is NOT a valid answer when the schema declares required
@@ -38,7 +38,7 @@ def _satisfies_schema_shape(text: str, schema: dict | None) -> bool:
     return True
 
 
-def _minimal_example_for_schema(schema: dict | None) -> dict:
+def _minimal_example_for_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
     """Build a minimal example object that satisfies `schema`'s required fields.
 
     Used by schema-coerce retries to give weak-instruct vendors (GLM, MiniMax)
@@ -59,7 +59,7 @@ def _minimal_example_for_schema(schema: dict | None) -> dict:
         return {}
     schema_type = schema.get("type")
     if schema_type == "object":
-        out: dict = {}
+        out: dict[str, Any] = {}
         props = schema.get("properties") or {}
         for key in schema.get("required") or []:
             sub = props.get(key, {"type": "string"})
@@ -68,7 +68,7 @@ def _minimal_example_for_schema(schema: dict | None) -> dict:
     return {}
 
 
-def _minimal_example_for_value(schema: dict) -> Any:
+def _minimal_example_for_value(schema: dict[str, Any]) -> Any:
     """Sibling of `_minimal_example_for_schema` for non-root values."""
     if not isinstance(schema, dict):
         return None

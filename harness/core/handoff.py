@@ -79,7 +79,7 @@ class HandoffManager:
             "checkpoint_id": checkpoint_id,
             "step": checkpoint["step"],
         })
-        return checkpoint["state_snapshot"]
+        return checkpoint["state_snapshot"]  # type: ignore[return-value]
 
     def list_checkpoints(self, workflow_id: str | None = None) -> list[dict[str, Any]]:
         """List all checkpoints, optionally filtered by workflow."""
@@ -102,7 +102,7 @@ class HandoffManager:
         checkpoint = json.loads(data)
         cp_id = checkpoint["checkpoint_id"]
         self._checkpoints[cp_id] = checkpoint
-        return checkpoint
+        return checkpoint  # type: ignore[return-value]
 
     @property
     def handoff_log(self) -> list[dict[str, Any]]:

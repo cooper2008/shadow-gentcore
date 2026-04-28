@@ -84,7 +84,7 @@ class ToolDisclosureRouter:
         for entry in declared_tools:
             if isinstance(entry, dict):
                 name: str = entry.get("name", "")
-                desc: str = entry.get("desc", entry.get("description", ""))
+                desc = str(entry.get("desc") or entry.get("description") or "")
                 level: str = str(entry.get("level", "L2")).upper()
             else:
                 name = str(entry)

@@ -12,7 +12,7 @@ from agent_contracts.contracts.run_record import RunRecord
 from agent_contracts.contracts.storage import StorageBackend
 
 
-class LocalFilesystemStorage(StorageBackend):
+class LocalFilesystemStorage(StorageBackend):  # type: ignore[misc]
     """Filesystem-backed StorageBackend for local development and testing.
 
     Directory layout:

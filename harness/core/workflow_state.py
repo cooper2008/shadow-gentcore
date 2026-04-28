@@ -93,7 +93,7 @@ class FileStateStore:
         if not path.exists():
             return None
         data = json.loads(path.read_text(encoding="utf-8"))
-        return data.get("result")
+        return data.get("result")  # type: ignore[return-value]
 
     def list_completed(self, workflow_id: str) -> list[str]:
         """Return step names that have been persisted, sorted by filename."""

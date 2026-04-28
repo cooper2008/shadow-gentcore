@@ -54,7 +54,7 @@ class OriginHotspot:
         recency_days = max(1.0, (time.time() - self.last_seen) / 86400)
         recency_weight = 0.5 ** (recency_days / 30)  # 30-day half-life
         not_found_penalty = 1.0 + (self.not_found_count / max(1, self.fetch_count))
-        return self.fetch_count * recency_weight * not_found_penalty
+        return float(self.fetch_count * recency_weight * not_found_penalty)
 
 
 @dataclass

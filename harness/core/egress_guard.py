@@ -40,6 +40,7 @@ Zero external deps — uses socket / ipaddress / httpx from stdlib.
 from __future__ import annotations
 
 import ipaddress
+from ipaddress import IPv4Address, IPv6Address
 import logging
 import socket
 from dataclasses import dataclass, field
@@ -93,7 +94,7 @@ def _host_is_in_blocked_set(host: str) -> str | None:
     return _describe_blocked_ip(ip)
 
 
-def _describe_blocked_ip(ip: ipaddress._BaseAddress) -> str | None:
+def _describe_blocked_ip(ip: IPv4Address | IPv6Address) -> str | None:
     """Return a human-readable reason if the IP should be blocked, else None.
 
     Order matters: check most-specific categories first so the label
@@ -126,8 +127,9 @@ def _resolve_host(host: str) -> list[str]:
         return []
     ips: list[str] = []
     for family, _kind, _proto, _cname, sockaddr in infos:
-        addr = sockaddr[0] if sockaddr else ""
-        if addr:
+        raw = sockaddr[0] if sockaddr else ""
+        if raw:
+            addr = str(raw)
             # IPv6 sockaddr sometimes includes scope id — strip
             if "%" in addr:
                 addr = addr.split("%", 1)[0]

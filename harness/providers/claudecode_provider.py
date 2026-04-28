@@ -23,7 +23,7 @@ class ClaudeCodeProvider(BaseProvider):
         self._model = model
         self._timeout = timeout
 
-    async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> dict[str, Any]:
+    async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> dict[str, Any]:  # type: ignore[override]
         """Send messages through claude -p via stdin."""
         # Combine system + user messages into one prompt for claude -p
         system_parts: list[str] = []

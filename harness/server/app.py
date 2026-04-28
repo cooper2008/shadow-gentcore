@@ -176,7 +176,7 @@ def create_app(domain_path: str = "") -> FastAPI:
             except asyncio.TimeoutError:
                 raise HTTPException(status_code=504, detail="Request timed out")
             except HumanApprovalRequired as e:
-                return JSONResponse(
+                return JSONResponse(  # type: ignore[return-value]
                     status_code=202,
                     content={
                         "status": "awaiting_approval",
@@ -240,7 +240,7 @@ def create_app(domain_path: str = "") -> FastAPI:
             except asyncio.TimeoutError:
                 raise HTTPException(status_code=504, detail="Request timed out")
             except HumanApprovalRequired as e:
-                return JSONResponse(
+                return JSONResponse(  # type: ignore[return-value]
                     status_code=202,
                     content={
                         "status": "awaiting_approval",

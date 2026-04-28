@@ -151,7 +151,7 @@ class AWSSecretsBackend:
         if self._client is not None:
             return self._client
         try:
-            import boto3  # type: ignore[import-not-found]
+            import boto3
             self._client = boto3.client("secretsmanager", region_name=self.region)
         except ImportError:
             logger.warning(
@@ -209,7 +209,7 @@ class VaultBackend:
         if self._client is not None:
             return self._client
         try:
-            import hvac  # type: ignore[import-not-found]
+            import hvac
             self._client = hvac.Client(
                 url=os.environ.get("VAULT_ADDR", ""),
                 token=os.environ.get("VAULT_TOKEN", ""),

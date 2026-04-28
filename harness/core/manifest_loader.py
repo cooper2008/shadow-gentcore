@@ -660,7 +660,7 @@ class ManifestLoader:
         regenerating agent manifests. Builder keeps emitting only `tools: [...]`;
         this method makes `required_credentials` derived, not hand-authored.
         """
-        return credential_registry.required_for_agent(agent_manifest)
+        return list(credential_registry.required_for_agent(agent_manifest))
 
     # ------------------------------------------------------------------
     # Public API
@@ -986,6 +986,13 @@ class ManifestLoader:
                     )
                 else:
                     logger.debug("All tool credentials resolved (%d tools checked)", len(registered_tool_names))
+            # Surface resolver diagnostics — malformed tool YAML files that
+            # silently failed resolution (actionable at WARNING level).
+            for diag in resolver.diagnostics:
+                logger.warning(
+                    "Tool resolution failed for %s (path: %s): %s",
+                    diag.get("uri"), diag.get("path"), diag.get("error"),
+                )
             self._credential_registry = cred_registry
         except Exception as exc:
             logger.debug("agent-tools integration unavailable, skipping toolpack registration: %s", exc)
@@ -1020,10 +1027,10 @@ class ManifestLoader:
             max_iter = loop_def.get("max_iterations") or loop_def.get("max_rounds", 2)
             condition_expr = loop_def.get("condition")
             if condition_expr:
-                def condition_fn(result, _c=condition_expr):  # noqa: E306
+                def condition_fn(result: Any, _c: str = condition_expr) -> bool:  # noqa: E306
                     return not engine._evaluate_condition(_c, result)
             else:
-                condition_fn = None
+                condition_fn = None  # type: ignore[assignment]
             loop = FeedbackLoop(
                 from_step=loop_def.get("from_step", ""),
                 to_step=loop_def.get("to_step", ""),

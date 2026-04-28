@@ -89,7 +89,7 @@ class DomainRegistry:
                     "port": port,
                 }
             logger.debug("Registered domain: %s at %s", domain_name, path)
-            return domain_name
+            return str(domain_name)
         except Exception as exc:
             logger.warning("Failed to load domain at %s: %s", path, exc)
             return None

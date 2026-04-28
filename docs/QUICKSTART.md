@@ -164,6 +164,16 @@ export AWS_PROFILE=your-profile
 
 Full matrix → [PROVIDER_GUIDE.md](PROVIDER_GUIDE.md).
 
+Then verify the framework sees your credential:
+
+```bash
+./ai providers detect          # shows detected vendors + available models
+./ai providers status          # shows which model tiers are covered
+```
+
+`providers detect --live` also pings the list-models endpoint to confirm the key
+authenticates before you commit to a full genesis run (~1-2s per vendor).
+
 ---
 
 ## 6. Run genesis — build your domain's agents

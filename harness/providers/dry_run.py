@@ -17,7 +17,7 @@ class DryRunProvider(BaseProvider):
     - CI/CD pipeline validation
     """
 
-    async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> dict[str, Any]:
+    async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> dict[str, Any]:  # type: ignore[override]
         """Return a stub response dict compatible with execution strategies.
 
         Returns a plain dict (not LLMResponse) because execution strategies

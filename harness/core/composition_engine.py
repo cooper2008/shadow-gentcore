@@ -350,7 +350,7 @@ class CompositionEngine:
             result["_artifact"] = artifact
             result["_confidence"] = artifact.confidence
             self._record_step_observability(step_name, result, _step_start_monotonic)
-            return result
+            return result  # type: ignore[return-value]
         # Stub: return a placeholder result
         stub_result = {
             "step": step_name,
@@ -686,7 +686,7 @@ class CompositionEngine:
         # "status == <value>"
         if cond.startswith("status == "):
             expected = condition.strip()[len("status == "):].strip().strip("\"'")
-            return result.get("status", "") == expected
+            return str(result.get("status", "")) == expected
 
         # "confidence >= <N>"
         if cond.startswith("confidence >= "):

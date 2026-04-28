@@ -146,7 +146,7 @@ class PromptAssembler:
         lines = ["## Context"]
         ordered = sorted(
             context_items,
-            key=lambda item: int(item.get("priority", 0) or 0),  # type: ignore[arg-type]
+            key=lambda item: int(item.get("priority", 0) or 0),
             reverse=True,
         )
         for item in ordered:

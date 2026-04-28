@@ -103,7 +103,7 @@ async def _http_get_with_backoff(
             continue
 
         return resp
-    return resp  # type: ignore[return-value]
+    return resp
 
 
 def _parse_github_uri(uri: str) -> dict[str, Any]:
@@ -173,7 +173,7 @@ class GitHubAdapter(SourceAdapter):
             cached_sha = (dest / ".materialized_sha").read_text().strip()
             if cached_sha == resolved_sha:
                 logger.info("Using cached GitHub materialization: %s", dest)
-                return (dest / subpath) if subpath else dest
+                return (dest / subpath) if subpath else dest  # type: ignore[return-value]
             # Cache mismatch — fall through to re-download
             shutil.rmtree(dest, ignore_errors=True)
 
@@ -187,7 +187,7 @@ class GitHubAdapter(SourceAdapter):
                 f"Subpath {subpath!r} not found after materialization of "
                 f"{spec.uri}. Extracted into {dest}."
             )
-        return final
+        return final  # type: ignore[return-value]
 
     async def _resolve_ref(
         self,
@@ -221,7 +221,7 @@ class GitHubAdapter(SourceAdapter):
                 f"GitHub auth failed for {org}/{repo}@{ref}. Check GITHUB_TOKEN value/scope."
             )
         resp.raise_for_status()
-        return resp.json()["sha"]
+        return str(resp.json()["sha"])
 
     async def _download_tarball(
         self,
@@ -276,7 +276,7 @@ class GitHubAdapter(SourceAdapter):
                 # Python 3.12+: extra belt-and-suspenders via extraction filter.
                 # On 3.11 this is a no-op.
                 try:
-                    tf.extractall(tmpd, filter="data")  # type: ignore[call-arg]
+                    tf.extractall(tmpd, filter="data")
                 except TypeError:
                     tf.extractall(tmpd)
             children = [p for p in Path(tmpd).iterdir() if p.is_dir()]

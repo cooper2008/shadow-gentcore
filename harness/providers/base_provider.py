@@ -47,7 +47,7 @@ class BaseProvider(ABC):
         """
 
     @abstractmethod
-    async def stream(self, messages: list[dict[str, Any]], **kwargs: Any) -> AsyncIterator[LLMChunk]:
+    def stream(self, messages: list[dict[str, Any]], **kwargs: Any) -> AsyncIterator[LLMChunk]:
         """Send a streaming chat completion request.
 
         Args:

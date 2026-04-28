@@ -351,6 +351,7 @@ def validate_contracts(domain_path: str | None, agent_path: str | None, llm_judg
             raise SystemExit(1)
         return
 
+    assert domain_path is not None  # guarded by the "if not (domain_path or agent_path)" check above
     dp = Path(domain_path).expanduser().resolve()
     report = validate_domain_contracts(dp)
     click.echo(report.format_cli())
@@ -452,9 +453,9 @@ def providers_detect(live: bool, domain_path: str | None) -> None:
         click.echo("No LLM providers detected.")
         click.echo("")
         click.echo("Set one or more of these env vars to enable a provider:")
-        for v in load_known_vendors():
-            envs = " + ".join(v.get("env_vars") or [])
-            click.echo(f"  {v.get('vendor', '?'):20s}  {envs}")
+        for vc in load_known_vendors():
+            envs = " + ".join(vc.get("env_vars") or [])
+            click.echo(f"  {vc.get('vendor', '?'):20s}  {envs}")
         return
 
     click.echo(f"Detected providers ({len(detected)}):")

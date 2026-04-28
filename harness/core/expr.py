@@ -279,7 +279,7 @@ class _Parser:
                     raise ValueError("expected ')' after len argument")
                 value = _resolve_field(self._ctx, inner_text)
                 try:
-                    return len(value)  # type: ignore[arg-type]
+                    return len(value)
                 except TypeError:
                     return 0
             if lower == "has_output":
@@ -364,11 +364,11 @@ def _compare(left: Any, op: str, right: Any) -> bool:
     }
 
     try:
-        ln = float(left)  # type: ignore[arg-type]
-        rn = float(right)  # type: ignore[arg-type]
+        ln = float(left)
+        rn = float(right)
         fn = _NUMERIC_OPS.get(op)
         if fn is not None:
-            return fn(ln, rn)
+            return bool(fn(ln, rn))
     except (TypeError, ValueError):
         pass
 
@@ -376,7 +376,7 @@ def _compare(left: Any, op: str, right: Any) -> bool:
     rs = str(right).lower()
     fn = _NUMERIC_OPS.get(op)
     if fn is not None:
-        return fn(ls, rs)
+        return bool(fn(ls, rs))
     return False
 
 

@@ -1,4 +1,4 @@
-.PHONY: help setup lint test smoke smoke-preflight smoke-quick agent-run workflow-run validate certify
+.PHONY: help setup lint typecheck test check smoke smoke-preflight smoke-quick agent-run workflow-run validate certify
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -10,8 +10,16 @@ lint: ## Run linter and type checker
 	ruff check harness/ agents/ workflows/
 	mypy harness/
 
+typecheck: ## Run type checker without writing local cache
+	mypy --cache-dir=/dev/null harness/
+
 test: ## Run all tests
 	pytest harness/tests/ -v
+
+check: ## Run release quality checks without writing local pytest cache or bytecode
+	ruff check --no-cache harness/ agents/ workflows/
+	mypy --cache-dir=/dev/null harness/
+	PYTHONDONTWRITEBYTECODE=1 pytest -p no:cacheprovider harness/tests/ -q
 
 smoke: ## Full smoke test (single + cross-domain, no API key)
 	pytest harness/tests/smoke/ -v

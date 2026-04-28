@@ -149,7 +149,7 @@ class OutputValidator:
         expected = type_map.get(expected_type)
         if expected is None:
             return True
-        return isinstance(value, expected)
+        return isinstance(value, expected)  # type: ignore[arg-type]
 
     async def _evaluate_criterion(
         self,

@@ -62,7 +62,7 @@ class CIHookRegistry:
         matching = [h for h in self._hooks if h.event == event and h.filter_fn(payload)]
 
         for hook in matching:
-            trigger_record = {
+            trigger_record: dict[str, Any] = {
                 "event": event,
                 "workflow": hook.workflow_name,
                 "payload_keys": list(payload.keys()),

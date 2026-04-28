@@ -8,7 +8,10 @@ import logging
 import os
 import time
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from harness.core.rule_engine import RuleContext
 
 from agent_contracts.manifests.agent_manifest import AgentManifest
 from agent_contracts.contracts.task_envelope import TaskEnvelope
@@ -281,7 +284,7 @@ class AgentRunner:
             and self.tool_executor is not None
             and hasattr(self.tool_executor, "set_rule_context")
         )
-        if _rule_enforcement_active:
+        if _rule_enforcement_active and self.tool_executor is not None:
             self.tool_executor.set_rule_context(
                 build_rule_context_from_manifest(manifest)
             )
